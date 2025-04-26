@@ -11,7 +11,8 @@ use super::proto::{
     Proxy as ProtoProxy, 
     Consumer as ProtoConsumer, 
     PluginConfig as ProtoPluginConfig,
-    ProxyProtocol, AuthMode as ProtoAuthMode
+    Protocol as ProtoProtocol, 
+    AuthMode as ProtoAuthMode
 };
 
 /// Conversion from protobuf Proxy to domain Proxy
@@ -88,19 +89,19 @@ impl From<&Proxy> for ProtoProxy {
             Protocol::Ws => ProtoProtocol::Ws,
             Protocol::Wss => ProtoProtocol::Wss,
             Protocol::Grpc => ProtoProtocol::Grpc,
-        } as i32;
+        };
         
         // Convert the auth mode enum
         let auth_mode = match proxy.auth_mode {
             AuthMode::Single => ProtoAuthMode::Single,
             AuthMode::Multi => ProtoAuthMode::Multi,
-        } as i32;
+        };
         
         ProtoProxy {
             id: proxy.id.clone(),
             name: proxy.name.clone().unwrap_or_default(),
             listen_path: proxy.listen_path.clone(),
-            backend_protocol,
+            backend_protocol: backend_protocol.into(),
             backend_host: proxy.backend_host.clone(),
             backend_port: proxy.backend_port as u32,
             backend_path: proxy.backend_path.clone().unwrap_or_default(),
@@ -115,10 +116,10 @@ impl From<&Proxy> for ProtoProxy {
             backend_tls_server_ca_cert_path: proxy.backend_tls_server_ca_cert_path.clone().unwrap_or_default(),
             dns_override: proxy.dns_override.clone().unwrap_or_default(),
             dns_cache_ttl_seconds: proxy.dns_cache_ttl_seconds.unwrap_or(0),
-            auth_mode,
+            auth_mode: auth_mode.into(),
+            plugin_config_ids: proxy.plugins.iter().map(|p| p.plugin_config_id.clone()).collect(),
             created_at: proxy.created_at.to_rfc3339(),
             updated_at: proxy.updated_at.to_rfc3339(),
-            plugin_ids: proxy.plugins.clone(),
         }
     }
 }
@@ -243,6 +244,31 @@ impl From<&PluginConfig> for ProtoPluginConfig {
             enabled: plugin_config.enabled,
             created_at: plugin_config.created_at.to_rfc3339(),
             updated_at: plugin_config.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Conversion from Configuration to ConfigSnapshot
+impl From<&Configuration> for ConfigSnapshot {
+    fn from(config: &Configuration) -> Self {
+        let proxies = config.proxies.iter()
+            .map(ProtoProxy::from)
+            .collect();
+        
+        let consumers = config.consumers.iter()
+            .map(ProtoConsumer::from)
+            .collect();
+        
+        let plugin_configs = config.plugin_configs.iter()
+            .map(ProtoPluginConfig::from)
+            .collect();
+        
+        ConfigSnapshot {
+            proxies,
+            consumers,
+            plugin_configs,
+            version: 0, // Will be set by the caller
+            created_at: config.last_updated_at.to_rfc3339(),
         }
     }
 }

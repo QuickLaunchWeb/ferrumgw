@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO plugin_configs (\n            plugin_name, config, scope, proxy_id, consumer_id, enabled\n        )\n        VALUES ($1, $2, $3, $4, $5, $6)\n        RETURNING id, created_at, updated_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": [
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "c28fbcd5111f542494cbee7bd07f3ca7134ff995785c4424bf949a2a7fd30646"
+}

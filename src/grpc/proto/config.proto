@@ -83,6 +83,21 @@ message ConfigDelta {
   repeated string remove_plugin_config_ids = 6;
 }
 
+// Protocol types for backend connections
+enum Protocol {
+  HTTP = 0;
+  HTTPS = 1;
+  WS = 2;
+  WSS = 3;
+  GRPC = 4;
+}
+
+// Authentication modes
+enum AuthMode {
+  SINGLE = 0;
+  MULTI = 1;
+}
+
 // Proxy configuration
 message Proxy {
   // Unique identifier
@@ -92,7 +107,7 @@ message Proxy {
   // Path prefix for matching requests (MUST be unique)
   string listen_path = 3;
   // Backend protocol: http, https, ws, wss, grpc
-  string backend_protocol = 4;
+  Protocol backend_protocol = 4;
   // Backend hostname
   string backend_host = 5;
   // Backend port
@@ -122,7 +137,7 @@ message Proxy {
   // TTL for DNS cache entries in seconds (overrides global setting)
   uint64 dns_cache_ttl_seconds = 18;
   // Authentication mode: single or multi
-  string auth_mode = 19;
+  AuthMode auth_mode = 19;
   // Associated plugin configuration IDs
   repeated string plugin_config_ids = 20;
   // Creation timestamp (ISO8601 string)

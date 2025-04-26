@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO consumers (\n                id, username, custom_id, credentials, created_at, updated_at\n            )\n            VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "59f0bf223e23a087c4b280eafeb47f87a312e8b3b9e6e33f9c590a7cce70a68e"
+}

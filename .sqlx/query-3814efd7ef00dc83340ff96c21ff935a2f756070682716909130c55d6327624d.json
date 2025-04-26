@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE plugin_configs\n            SET \n                plugin_name = ?,\n                config = ?,\n                scope = ?,\n                proxy_id = ?,\n                consumer_id = ?,\n                enabled = ?,\n                updated_at = datetime('now')\n            WHERE id = ?\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "3814efd7ef00dc83340ff96c21ff935a2f756070682716909130c55d6327624d"
+}

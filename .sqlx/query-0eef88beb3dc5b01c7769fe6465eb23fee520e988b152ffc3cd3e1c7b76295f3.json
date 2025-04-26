@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE proxies\n            SET \n                name = ?,\n                listen_path = ?,\n                backend_protocol = ?,\n                backend_host = ?,\n                backend_port = ?,\n                backend_path = ?,\n                strip_listen_path = ?,\n                preserve_host_header = ?,\n                backend_connect_timeout_ms = ?,\n                backend_read_timeout_ms = ?,\n                backend_write_timeout_ms = ?,\n                backend_tls_client_cert_path = ?,\n                backend_tls_client_key_path = ?,\n                backend_tls_verify_server_cert = ?,\n                backend_tls_server_ca_cert_path = ?,\n                dns_override = ?,\n                dns_cache_ttl_seconds = ?,\n                auth_mode = ?,\n                updated_at = datetime('now')\n            WHERE id = ?\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 19
+    },
+    "nullable": []
+  },
+  "hash": "0eef88beb3dc5b01c7769fe6465eb23fee520e988b152ffc3cd3e1c7b76295f3"
+}

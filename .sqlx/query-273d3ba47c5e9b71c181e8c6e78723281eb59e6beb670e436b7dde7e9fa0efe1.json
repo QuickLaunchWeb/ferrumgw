@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO plugin_configs (\n                id, plugin_name, config, scope, proxy_id, consumer_id, enabled,\n                created_at, updated_at\n            )\n            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "273d3ba47c5e9b71c181e8c6e78723281eb59e6beb670e436b7dde7e9fa0efe1"
+}

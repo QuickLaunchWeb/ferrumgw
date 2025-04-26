@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM proxy_plugin_associations WHERE plugin_config_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "f9bd4bebc4e125a5521dffa63ac33707a508d3952e61f197c37038190f138e2c"
+}

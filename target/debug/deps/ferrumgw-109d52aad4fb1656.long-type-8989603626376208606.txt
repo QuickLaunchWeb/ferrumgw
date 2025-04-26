@@ -1,0 +1,2 @@
+Handle: hyper::rt::Executor<hyper::proto::h2::server::H2Stream<{async block@src/admin/mod.rs:161:29: 161:39}, hyper::Body>>
+hyper::server::conn::Connection<tokio::net::TcpStream, hyper::service::util::ServiceFn<{closure@src/admin/mod.rs:159:36: 159:46}, hyper::Body>, Handle>

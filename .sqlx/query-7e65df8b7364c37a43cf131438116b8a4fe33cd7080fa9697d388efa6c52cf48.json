@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT plugin_config_id, embedded_config\n            FROM proxy_plugin_associations\n            WHERE proxy_id = $1\n            ORDER BY id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "plugin_config_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "embedded_config",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "7e65df8b7364c37a43cf131438116b8a4fe33cd7080fa9697d388efa6c52cf48"
+}
