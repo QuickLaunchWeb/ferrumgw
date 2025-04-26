@@ -1,0 +1,618 @@
+{
+  "db": "PostgreSQL",
+  "queries": [
+    {
+      "query": "SELECT id, name, listen_path, backend_protocol, backend_host, backend_port, backend_path, strip_listen_path, preserve_host_header, backend_connect_timeout_ms, backend_read_timeout_ms, backend_write_timeout_ms, backend_tls_client_cert_path, backend_tls_client_key_path, backend_tls_verify_server_cert, backend_tls_server_ca_cert_path, dns_override, dns_cache_ttl_seconds, auth_mode, created_at, updated_at FROM proxies",
+      "describe": {
+        "columns": [
+          {
+            "name": "id",
+            "ordinal": 0,
+            "type_info": "Text"
+          },
+          {
+            "name": "name",
+            "ordinal": 1,
+            "type_info": "Text"
+          },
+          {
+            "name": "listen_path",
+            "ordinal": 2,
+            "type_info": "Text"
+          },
+          {
+            "name": "backend_protocol",
+            "ordinal": 3,
+            "type_info": "Text"
+          },
+          {
+            "name": "backend_host",
+            "ordinal": 4,
+            "type_info": "Text"
+          },
+          {
+            "name": "backend_port",
+            "ordinal": 5,
+            "type_info": "Int4"
+          },
+          {
+            "name": "backend_path",
+            "ordinal": 6,
+            "type_info": "Text"
+          },
+          {
+            "name": "strip_listen_path",
+            "ordinal": 7,
+            "type_info": "Bool"
+          },
+          {
+            "name": "preserve_host_header",
+            "ordinal": 8,
+            "type_info": "Bool"
+          },
+          {
+            "name": "backend_connect_timeout_ms",
+            "ordinal": 9,
+            "type_info": "Int8"
+          },
+          {
+            "name": "backend_read_timeout_ms",
+            "ordinal": 10,
+            "type_info": "Int8"
+          },
+          {
+            "name": "backend_write_timeout_ms",
+            "ordinal": 11,
+            "type_info": "Int8"
+          },
+          {
+            "name": "backend_tls_client_cert_path",
+            "ordinal": 12,
+            "type_info": "Text"
+          },
+          {
+            "name": "backend_tls_client_key_path",
+            "ordinal": 13,
+            "type_info": "Text"
+          },
+          {
+            "name": "backend_tls_verify_server_cert",
+            "ordinal": 14,
+            "type_info": "Bool"
+          },
+          {
+            "name": "backend_tls_server_ca_cert_path",
+            "ordinal": 15,
+            "type_info": "Text"
+          },
+          {
+            "name": "dns_override",
+            "ordinal": 16,
+            "type_info": "Text"
+          },
+          {
+            "name": "dns_cache_ttl_seconds",
+            "ordinal": 17,
+            "type_info": "Int8"
+          },
+          {
+            "name": "auth_mode",
+            "ordinal": 18,
+            "type_info": "Text"
+          },
+          {
+            "name": "created_at",
+            "ordinal": 19,
+            "type_info": "Timestamptz"
+          },
+          {
+            "name": "updated_at",
+            "ordinal": 20,
+            "type_info": "Timestamptz"
+          }
+        ],
+        "parameters": {
+          "Left": []
+        },
+        "nullable": [
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "query": "SELECT id, username, custom_id, credentials, created_at, updated_at FROM consumers",
+      "describe": {
+        "columns": [
+          {
+            "name": "id",
+            "ordinal": 0,
+            "type_info": "Text"
+          },
+          {
+            "name": "username",
+            "ordinal": 1,
+            "type_info": "Text"
+          },
+          {
+            "name": "custom_id",
+            "ordinal": 2,
+            "type_info": "Text"
+          },
+          {
+            "name": "credentials",
+            "ordinal": 3,
+            "type_info": "Jsonb"
+          },
+          {
+            "name": "created_at",
+            "ordinal": 4,
+            "type_info": "Timestamptz"
+          },
+          {
+            "name": "updated_at",
+            "ordinal": 5,
+            "type_info": "Timestamptz"
+          }
+        ],
+        "parameters": {
+          "Left": []
+        },
+        "nullable": [
+          false,
+          false,
+          true,
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "query": "SELECT id, plugin_name, config, scope, proxy_id, consumer_id, enabled, created_at, updated_at FROM plugin_configs",
+      "describe": {
+        "columns": [
+          {
+            "name": "id",
+            "ordinal": 0,
+            "type_info": "Text"
+          },
+          {
+            "name": "plugin_name",
+            "ordinal": 1,
+            "type_info": "Text"
+          },
+          {
+            "name": "config",
+            "ordinal": 2,
+            "type_info": "Jsonb"
+          },
+          {
+            "name": "scope",
+            "ordinal": 3,
+            "type_info": "Text"
+          },
+          {
+            "name": "proxy_id",
+            "ordinal": 4,
+            "type_info": "Text"
+          },
+          {
+            "name": "consumer_id",
+            "ordinal": 5,
+            "type_info": "Text"
+          },
+          {
+            "name": "enabled",
+            "ordinal": 6,
+            "type_info": "Bool"
+          },
+          {
+            "name": "created_at",
+            "ordinal": 7,
+            "type_info": "Timestamptz"
+          },
+          {
+            "name": "updated_at",
+            "ordinal": 8,
+            "type_info": "Timestamptz"
+          }
+        ],
+        "parameters": {
+          "Left": []
+        },
+        "nullable": [
+          false,
+          false,
+          false,
+          false,
+          true,
+          true,
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "query": "SELECT plugin_config_id, embedded_config FROM proxy_plugin_associations WHERE proxy_id = $1 ORDER BY priority ASC",
+      "describe": {
+        "columns": [
+          {
+            "name": "plugin_config_id",
+            "ordinal": 0,
+            "type_info": "Text"
+          },
+          {
+            "name": "embedded_config",
+            "ordinal": 1,
+            "type_info": "Jsonb"
+          }
+        ],
+        "parameters": {
+          "Left": [
+            "Text"
+          ]
+        },
+        "nullable": [
+          false,
+          true
+        ]
+      }
+    },
+    {
+      "query": "SELECT EXISTS(SELECT 1 FROM proxies WHERE listen_path = $1) as exists",
+      "describe": {
+        "columns": [
+          {
+            "name": "exists",
+            "ordinal": 0,
+            "type_info": "Bool"
+          }
+        ],
+        "parameters": {
+          "Left": [
+            "Text"
+          ]
+        },
+        "nullable": [
+          null
+        ]
+      }
+    },
+    {
+      "query": "INSERT INTO proxies (name, listen_path, backend_protocol, backend_host, backend_port, backend_path, strip_listen_path, preserve_host_header, backend_connect_timeout_ms, backend_read_timeout_ms, backend_write_timeout_ms, backend_tls_client_cert_path, backend_tls_client_key_path, backend_tls_verify_server_cert, backend_tls_server_ca_cert_path, dns_override, dns_cache_ttl_seconds, auth_mode, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20) RETURNING id",
+      "describe": {
+        "columns": [
+          {
+            "name": "id",
+            "ordinal": 0,
+            "type_info": "Text"
+          }
+        ],
+        "parameters": {
+          "Left": [
+            "Text",
+            "Text",
+            "Text",
+            "Text",
+            "Int4",
+            "Text",
+            "Bool",
+            "Bool",
+            "Int8",
+            "Int8",
+            "Int8",
+            "Text",
+            "Text",
+            "Bool",
+            "Text",
+            "Text",
+            "Int8",
+            "Text",
+            "Timestamptz",
+            "Timestamptz"
+          ]
+        },
+        "nullable": [
+          false
+        ]
+      }
+    },
+    {
+      "query": "SELECT \n            id,\n            name, listen_path, backend_protocol as \"backend_protocol: String\", \n            backend_host, backend_port, backend_path,\n            strip_listen_path, preserve_host_header,\n            backend_connect_timeout_ms, backend_read_timeout_ms, backend_write_timeout_ms,\n            backend_tls_client_cert_path, backend_tls_client_key_path, backend_tls_verify_server_cert,\n            backend_tls_server_ca_cert_path, \n            dns_override, dns_cache_ttl_seconds,\n            auth_mode as \"auth_mode: String\",\n            created_at, updated_at\n        FROM proxies",
+      "describe": {
+        "columns": [
+          {
+            "name": "id",
+            "ordinal": 0,
+            "type_info": "Varchar"
+          },
+          {
+            "name": "name",
+            "ordinal": 1,
+            "type_info": "Varchar"
+          },
+          {
+            "name": "listen_path",
+            "ordinal": 2,
+            "type_info": "Varchar"
+          },
+          {
+            "name": "backend_protocol",
+            "ordinal": 3,
+            "type_info": "Varchar"
+          },
+          {
+            "name": "backend_host",
+            "ordinal": 4,
+            "type_info": "Varchar"
+          },
+          {
+            "name": "backend_port",
+            "ordinal": 5,
+            "type_info": "Int4"
+          },
+          {
+            "name": "backend_path",
+            "ordinal": 6,
+            "type_info": "Varchar"
+          },
+          {
+            "name": "strip_listen_path",
+            "ordinal": 7,
+            "type_info": "Bool"
+          },
+          {
+            "name": "preserve_host_header",
+            "ordinal": 8,
+            "type_info": "Bool"
+          },
+          {
+            "name": "backend_connect_timeout_ms",
+            "ordinal": 9,
+            "type_info": "Int4"
+          },
+          {
+            "name": "backend_read_timeout_ms",
+            "ordinal": 10,
+            "type_info": "Int4"
+          },
+          {
+            "name": "backend_write_timeout_ms",
+            "ordinal": 11,
+            "type_info": "Int4"
+          },
+          {
+            "name": "backend_tls_client_cert_path",
+            "ordinal": 12,
+            "type_info": "Varchar"
+          },
+          {
+            "name": "backend_tls_client_key_path",
+            "ordinal": 13,
+            "type_info": "Varchar"
+          },
+          {
+            "name": "backend_tls_verify_server_cert",
+            "ordinal": 14,
+            "type_info": "Bool"
+          },
+          {
+            "name": "backend_tls_server_ca_cert_path",
+            "ordinal": 15,
+            "type_info": "Varchar"
+          },
+          {
+            "name": "dns_override",
+            "ordinal": 16,
+            "type_info": "Varchar"
+          },
+          {
+            "name": "dns_cache_ttl_seconds",
+            "ordinal": 17,
+            "type_info": "Int4"
+          },
+          {
+            "name": "auth_mode",
+            "ordinal": 18,
+            "type_info": "Varchar"
+          },
+          {
+            "name": "created_at",
+            "ordinal": 19,
+            "type_info": "Timestamptz"
+          },
+          {
+            "name": "updated_at",
+            "ordinal": 20,
+            "type_info": "Timestamptz"
+          }
+        ],
+        "nullable": [
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          false,
+          false
+        ],
+        "parameters": {
+          "Left": []
+        }
+      }
+    }
+  ],
+  "a380a7b98edb9985a3292c89dc2d7466f4d929bfcd74e8c73dad6b10c385cd24": {
+    "describe": {
+      "columns": [
+        {
+          "name": "id",
+          "ordinal": 0,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "name",
+          "ordinal": 1,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "listen_path",
+          "ordinal": 2,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "backend_protocol",
+          "ordinal": 3,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "backend_host",
+          "ordinal": 4,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "backend_port",
+          "ordinal": 5,
+          "type_info": "Int4"
+        },
+        {
+          "name": "backend_path",
+          "ordinal": 6,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "strip_listen_path",
+          "ordinal": 7,
+          "type_info": "Bool"
+        },
+        {
+          "name": "preserve_host_header",
+          "ordinal": 8,
+          "type_info": "Bool"
+        },
+        {
+          "name": "backend_connect_timeout_ms",
+          "ordinal": 9,
+          "type_info": "Int4"
+        },
+        {
+          "name": "backend_read_timeout_ms",
+          "ordinal": 10,
+          "type_info": "Int4"
+        },
+        {
+          "name": "backend_write_timeout_ms",
+          "ordinal": 11,
+          "type_info": "Int4"
+        },
+        {
+          "name": "backend_tls_client_cert_path",
+          "ordinal": 12,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "backend_tls_client_key_path",
+          "ordinal": 13,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "backend_tls_verify_server_cert",
+          "ordinal": 14,
+          "type_info": "Bool"
+        },
+        {
+          "name": "backend_tls_server_ca_cert_path",
+          "ordinal": 15,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "dns_override",
+          "ordinal": 16,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "dns_cache_ttl_seconds",
+          "ordinal": 17,
+          "type_info": "Int4"
+        },
+        {
+          "name": "auth_mode",
+          "ordinal": 18,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "created_at",
+          "ordinal": 19,
+          "type_info": "Timestamptz"
+        },
+        {
+          "name": "updated_at",
+          "ordinal": 20,
+          "type_info": "Timestamptz"
+        }
+      ],
+      "nullable": [
+        false,
+        true,
+        false,
+        false,
+        false,
+        false,
+        true,
+        false,
+        false,
+        false,
+        false,
+        false,
+        true,
+        true,
+        false,
+        true,
+        true,
+        true,
+        false,
+        false,
+        false
+      ],
+      "parameters": {
+        "Left": []
+      }
+    },
+    "query": "SELECT \n            id,\n            name, listen_path, backend_protocol as \"backend_protocol: String\", \n            backend_host, backend_port, backend_path,\n            strip_listen_path, preserve_host_header,\n            backend_connect_timeout_ms, backend_read_timeout_ms, backend_write_timeout_ms,\n            backend_tls_client_cert_path, backend_tls_client_key_path, backend_tls_verify_server_cert,\n            backend_tls_server_ca_cert_path, \n            dns_override, dns_cache_ttl_seconds,\n            auth_mode as \"auth_mode: String\",\n            created_at, updated_at\n        FROM proxies"
+  }
+}

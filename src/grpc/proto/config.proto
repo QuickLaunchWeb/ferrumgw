@@ -1,0 +1,192 @@
+syntax = "proto3";
+
+package ferrumgw.config;
+
+// Control Plane / Data Plane configuration service
+service ConfigService {
+  // Subscribe to configuration updates from the Control Plane
+  // Data Plane nodes call this to receive initial and ongoing configuration updates
+  rpc SubscribeConfigUpdates(SubscribeRequest) returns (stream ConfigUpdate);
+  
+  // Get a snapshot of the current configuration from the Control Plane
+  // Used by Data Plane nodes after reconnection to quickly sync state
+  rpc GetConfigSnapshot(SnapshotRequest) returns (ConfigSnapshot);
+  
+  // Send health status from Data Plane to Control Plane
+  rpc ReportHealth(HealthReport) returns (HealthAck);
+}
+
+// Request to subscribe to configuration updates
+message SubscribeRequest {
+  // Data Plane node identifier
+  string node_id = 1;
+  // Current configuration version (0 if none)
+  uint64 current_version = 2;
+}
+
+// Request to get a full configuration snapshot
+message SnapshotRequest {
+  // Data Plane node identifier
+  string node_id = 1;
+}
+
+// Configuration update message sent from CP to DP
+message ConfigUpdate {
+  // Type of update
+  UpdateType update_type = 1;
+  // Full configuration or delta update based on update_type
+  oneof update {
+    ConfigSnapshot full_snapshot = 2;
+    ConfigDelta delta = 3;
+  }
+  // Configuration version
+  uint64 version = 4;
+  // Timestamp of this update (ISO8601 string)
+  string updated_at = 5;
+}
+
+// Types of configuration updates
+enum UpdateType {
+  // Complete replacement of configuration
+  FULL = 0;
+  // Incremental update (additions, modifications, removals)
+  DELTA = 1;
+}
+
+// Full configuration snapshot
+message ConfigSnapshot {
+  // All proxies in the configuration
+  repeated Proxy proxies = 1;
+  // All consumers in the configuration
+  repeated Consumer consumers = 2;
+  // All plugin configurations
+  repeated PluginConfig plugin_configs = 3;
+  // Configuration version
+  uint64 version = 4;
+  // Timestamp of this snapshot (ISO8601 string)
+  string created_at = 5;
+}
+
+// Delta configuration update
+message ConfigDelta {
+  // Added or modified proxies
+  repeated Proxy upsert_proxies = 1;
+  // IDs of removed proxies
+  repeated string remove_proxy_ids = 2;
+  // Added or modified consumers
+  repeated Consumer upsert_consumers = 3;
+  // IDs of removed consumers
+  repeated string remove_consumer_ids = 4;
+  // Added or modified plugin configurations
+  repeated PluginConfig upsert_plugin_configs = 5;
+  // IDs of removed plugin configurations
+  repeated string remove_plugin_config_ids = 6;
+}
+
+// Proxy configuration
+message Proxy {
+  // Unique identifier
+  string id = 1;
+  // Optional name
+  string name = 2;
+  // Path prefix for matching requests (MUST be unique)
+  string listen_path = 3;
+  // Backend protocol: http, https, ws, wss, grpc
+  string backend_protocol = 4;
+  // Backend hostname
+  string backend_host = 5;
+  // Backend port
+  uint32 backend_port = 6;
+  // Optional path prefix to add to backend requests
+  string backend_path = 7;
+  // Whether to strip the listen_path from forwarded requests
+  bool strip_listen_path = 8;
+  // Whether to preserve the Host header from the client request
+  bool preserve_host_header = 9;
+  // Connection timeout to backend in milliseconds
+  uint64 backend_connect_timeout_ms = 10;
+  // Read timeout for backend in milliseconds
+  uint64 backend_read_timeout_ms = 11;
+  // Write timeout for backend in milliseconds
+  uint64 backend_write_timeout_ms = 12;
+  // Path to client certificate for mTLS to backend
+  string backend_tls_client_cert_path = 13;
+  // Path to client key for mTLS to backend
+  string backend_tls_client_key_path = 14;
+  // Whether to verify the backend server certificate
+  bool backend_tls_verify_server_cert = 15;
+  // Path to CA certificate for verifying the backend server
+  string backend_tls_server_ca_cert_path = 16;
+  // Override IP address for DNS resolution
+  string dns_override = 17;
+  // TTL for DNS cache entries in seconds (overrides global setting)
+  uint64 dns_cache_ttl_seconds = 18;
+  // Authentication mode: single or multi
+  string auth_mode = 19;
+  // Associated plugin configuration IDs
+  repeated string plugin_config_ids = 20;
+  // Creation timestamp (ISO8601 string)
+  string created_at = 21;
+  // Last update timestamp (ISO8601 string)
+  string updated_at = 22;
+}
+
+// Consumer configuration
+message Consumer {
+  // Unique identifier
+  string id = 1;
+  // Username (unique)
+  string username = 2;
+  // Optional custom identifier
+  string custom_id = 3;
+  // Credential data (serialized JSON)
+  string credentials_json = 4;
+  // Creation timestamp (ISO8601 string)
+  string created_at = 5;
+  // Last update timestamp (ISO8601 string)
+  string updated_at = 6;
+}
+
+// Plugin configuration
+message PluginConfig {
+  // Unique identifier
+  string id = 1;
+  // Plugin type name
+  string plugin_name = 2;
+  // Plugin configuration (serialized JSON)
+  string config_json = 3;
+  // Scope: "global", "proxy", "consumer"
+  string scope = 4;
+  // Proxy ID if scope is "proxy"
+  string proxy_id = 5;
+  // Consumer ID if scope is "consumer"
+  string consumer_id = 6;
+  // Whether the plugin is enabled
+  bool enabled = 7;
+  // Creation timestamp (ISO8601 string)
+  string created_at = 8;
+  // Last update timestamp (ISO8601 string)
+  string updated_at = 9;
+}
+
+// Health report from Data Plane to Control Plane
+message HealthReport {
+  // Data Plane node identifier
+  string node_id = 1;
+  // Timestamp of report (ISO8601 string)
+  string timestamp = 2;
+  // Current configuration version
+  uint64 config_version = 3;
+  // System metrics
+  map<string, string> metrics = 4;
+  // Node status: "healthy", "degraded", "unhealthy"
+  string status = 5;
+}
+
+// Acknowledgment of health report
+message HealthAck {
+  // Success status
+  bool success = 1;
+  // Optional message
+  string message = 2;
+}

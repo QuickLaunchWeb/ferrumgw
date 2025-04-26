@@ -1,0 +1,79 @@
+[package]
+name = "ferrumgw"
+version = "0.1.0"
+edition = "2021"
+description = "A high-performance API Gateway and Reverse Proxy built in Rust"
+authors = ["Ferrum Gateway Team"]
+license = "MIT"
+
+[dependencies]
+# Asynchronous runtime
+tokio = { version = "1.32", features = ["full"] }
+tokio-stream = "0.1"
+tokio-rustls = "0.24"
+tokio-tungstenite = "0.19"
+
+# HTTP Server/Client
+hyper = { version = "0.14", features = ["full"] }
+hyper-tls = "0.5"
+http = "0.2"
+
+# gRPC Framework
+tonic = "0.9"
+prost = "0.11"
+prost-types = "0.11"
+
+# Serialization/Deserialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# Database Access
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "mysql", "sqlite", "chrono", "json"] }
+
+# Logging Framework
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
+
+# TLS Implementation
+rustls = "0.21"
+rustls-pemfile = "1.0"
+
+# WebSocket Handling
+tungstenite = "0.19"
+
+# JWT Handling
+jsonwebtoken = "8.3"
+
+# Password/Secret Hashing
+bcrypt = "0.14"
+argon2 = "0.5"
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Utils
+async-trait = "0.1"
+thiserror = "1.0"
+anyhow = "1.0"
+futures = "0.3"
+dashmap = "5.4"  # Concurrent HashMap for caching
+once_cell = "1.17" # For static initialization
+clap = { version = "4.3", features = ["derive", "env"] }
+rand = "0.8"
+
+# For health metrics
+prometheus = "0.13"
+
+[dev-dependencies]
+mockall = "0.11"
+tokio-test = "0.4"
+pretty_assertions = "1.3"
+
+[build-dependencies]
+tonic-build = "0.9"
+
+[[bin]]
+name = "ferrumgw"
+path = "src/main.rs"
