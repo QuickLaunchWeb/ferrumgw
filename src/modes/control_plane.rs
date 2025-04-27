@@ -16,8 +16,15 @@ pub async fn run(config: EnvConfig) -> Result<()> {
     info!("Starting Ferrum Gateway in Control Plane mode");
     
     // Get database configuration
-    let db_type = config.db_type.clone().context("Database type must be set in Control Plane mode")?;
+    let db_type_str = config.db_type.clone().context("Database type must be set in Control Plane mode")?;
     let db_url = config.db_url.clone().context("Database URL must be set in Control Plane mode")?;
+    
+    // Convert string database type to the database module's DatabaseType enum
+    let db_type = match db_type_str {
+        crate::config::data_model::DatabaseType::Postgres => crate::database::DatabaseType::Postgres,
+        crate::config::data_model::DatabaseType::MySQL => crate::database::DatabaseType::MySQL,
+        crate::config::data_model::DatabaseType::SQLite => crate::database::DatabaseType::SQLite,
+    };
     
     // Set up database client
     let db_client = DatabaseClient::new(db_type, &db_url)
@@ -26,7 +33,7 @@ pub async fn run(config: EnvConfig) -> Result<()> {
     
     // Get DNS cache configuration
     let dns_ttl = config.dns_cache_ttl_seconds;
-    let dns_overrides = config.dns_overrides.clone().unwrap_or_default();
+    let dns_overrides = config.dns_overrides.clone();
     
     // Create DNS cache - Control Plane can benefit from DNS caching for health checks
     let dns_cache = Arc::new(DnsCache::new(dns_ttl, dns_overrides));
@@ -104,7 +111,7 @@ pub async fn run(config: EnvConfig) -> Result<()> {
     let poll_interval = config.db_poll_interval;
     let poll_check_interval = config.db_poll_check_interval;
     let use_incremental_polling = config.db_incremental_polling;
-    let dns_cache_for_polling = Arc::clone(&dns_cache);
+    let dns_cache_for_polling: Arc<crate::dns::cache::DnsCache> = Arc::clone(&dns_cache);
     let config_service_clone = Arc::clone(&shared_config);
     
     let _polling_handle = tokio::spawn(async move {
@@ -177,7 +184,7 @@ pub async fn run(config: EnvConfig) -> Result<()> {
                                                 if !new_hosts.is_empty() {
                                                     // Warm up DNS cache for new hosts in background
                                                     for hostname in new_hosts {
-                                                        let dns_cache = Arc::clone(&dns_cache_for_polling);
+                                                        let dns_cache: Arc<crate::dns::cache::DnsCache> = Arc::clone(&dns_cache_for_polling);
                                                         tokio::spawn(async move {
                                                             if let Err(e) = dns_cache.resolve(&hostname).await {
                                                                 warn!("DNS warmup failed for host {}: {}", hostname, e);
@@ -677,7 +684,7 @@ pub mod grpc {
             Ok(())
         }
         
-        async fn push_config_update(&self, update: crate::proto::ConfigUpdate) -> Result<(), Status> {
+        pub async fn push_config_update(&self, update: crate::proto::ConfigUpdate) -> Result<(), Status> {
             // Get a copy of the clients hashmap
             let clients = self.shared_config.read().await.clients.lock().unwrap().clone();
             

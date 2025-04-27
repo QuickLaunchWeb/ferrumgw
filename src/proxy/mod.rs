@@ -26,10 +26,10 @@ use crate::proxy::router::Router;
 use crate::proxy::handler::ProxyHandler;
 use crate::plugins::PluginManager;
 use crate::proxy::update_manager::UpdateManager;
+use crate::dns::cache::DnsCache; // Add correct import for DNS cache
 
 mod router;
 mod handler;
-mod dns;
 mod tls;
 mod websocket;
 mod update_manager;
@@ -38,7 +38,7 @@ pub struct ProxyServer {
     env_config: EnvConfig,
     shared_config: Arc<RwLock<Configuration>>,
     plugin_manager: Arc<PluginManager>,
-    dns_cache: Arc<dns::DnsCache>,
+    dns_cache: Arc<DnsCache>,
     update_manager: Arc<UpdateManager>,
 }
 
@@ -46,7 +46,7 @@ impl ProxyServer {
     pub fn new(
         env_config: EnvConfig,
         shared_config: Arc<RwLock<Configuration>>,
-        dns_cache: Arc<dns::DnsCache>,
+        dns_cache: Arc<DnsCache>,
     ) -> Result<Self> {
         // Initialize the plugin manager
         let plugin_manager = Arc::new(PluginManager::new());
@@ -186,7 +186,7 @@ impl ProxyServer {
         addr: SocketAddr,
         shared_config: Arc<RwLock<Configuration>>,
         plugin_manager: Arc<PluginManager>,
-        dns_cache: Arc<dns::DnsCache>,
+        dns_cache: Arc<DnsCache>,
         max_header_size: usize,
         max_body_size: usize,
     ) -> Result<()> {
@@ -261,7 +261,7 @@ impl ProxyServer {
         key_path: String,
         shared_config: Arc<RwLock<Configuration>>,
         plugin_manager: Arc<PluginManager>,
-        dns_cache: Arc<dns::DnsCache>,
+        dns_cache: Arc<DnsCache>,
         max_header_size: usize,
         max_body_size: usize,
     ) -> Result<()> {
@@ -350,7 +350,7 @@ impl ProxyServer {
         key_path: String,
         shared_config: Arc<RwLock<Configuration>>,
         plugin_manager: Arc<PluginManager>,
-        dns_cache: Arc<dns::DnsCache>,
+        dns_cache: Arc<DnsCache>,
         max_body_size: usize,
     ) -> Result<()> {
         // Load TLS configuration for QUIC

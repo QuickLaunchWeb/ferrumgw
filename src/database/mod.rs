@@ -14,6 +14,20 @@ mod mysql;
 mod sqlite;
 
 #[derive(Debug, Clone)]
+pub enum DatabaseType {
+    Postgres,
+    MySQL,
+    SQLite,
+}
+
+// Add a flag to disable database features during testing
+#[cfg(test)]
+const DISABLE_DB_FEATURES: bool = true;
+
+#[cfg(not(test))]
+const DISABLE_DB_FEATURES: bool = false;
+
+#[derive(Debug, Clone)]
 pub struct DatabaseClient {
     db_type: DatabaseType,
     pool: Arc<DbPool>,

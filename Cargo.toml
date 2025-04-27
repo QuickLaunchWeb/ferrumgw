@@ -17,9 +17,9 @@ tokio-tungstenite = "0.19"
 hyper = { version = "0.14", features = ["full"] }
 hyper-tls = "0.5"
 http = "0.2"
-h3 = { version = "0.0.2", features = ["server"] }
-h3-quinn = "0.0.2"
-quinn = "0.9"
+h3 = "0.0.7"
+h3-quinn = "0.0.9"
+quinn = "0.10"
 bytes = "1.4"
 
 # gRPC Framework
@@ -33,7 +33,7 @@ serde_json = "1.0"
 serde_yaml = "0.9"
 
 # Database Access
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "mysql", "sqlite", "chrono", "json"] }
+sqlx = { version = "0.6", features = ["runtime-tokio-rustls", "postgres", "mysql", "sqlite", "json", "chrono", "uuid"] }
 
 # Logging Framework
 tracing = "0.1"
@@ -77,6 +77,8 @@ sqlite = []
 postgres = []
 mysql = []
 test_mode = []
+offline = ["sqlx/offline"]
+simplified_build = [] # Simplifies the build by disabling problematic components
 
 [dev-dependencies]
 mockall = "0.11"

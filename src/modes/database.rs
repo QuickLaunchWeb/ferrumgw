@@ -15,10 +15,18 @@ use crate::dns::{self, DnsCache};
 pub async fn run(config: EnvConfig) -> Result<()> {
     info!("Starting Ferrum Gateway in Database mode");
     
-    // Set up database client
-    let db_type = config.db_type.clone().context("Database type must be set in Database mode")?;
+    // Get database configuration
+    let db_type_str = config.db_type.clone().context("Database type must be set in Database mode")?;
     let db_url = config.db_url.clone().context("Database URL must be set in Database mode")?;
     
+    // Convert config DatabaseType to database module's DatabaseType
+    let db_type = match db_type_str {
+        crate::config::data_model::DatabaseType::Postgres => crate::database::DatabaseType::Postgres,
+        crate::config::data_model::DatabaseType::MySQL => crate::database::DatabaseType::MySQL,
+        crate::config::data_model::DatabaseType::SQLite => crate::database::DatabaseType::SQLite,
+    };
+    
+    // Set up database client
     let db_client = DatabaseClient::new(db_type, &db_url)
         .await
         .context("Failed to create database client")?;
@@ -28,7 +36,7 @@ pub async fn run(config: EnvConfig) -> Result<()> {
     let dns_overrides = config.dns_overrides.clone().unwrap_or_default();
     
     // Create DNS cache
-    let dns_cache = Arc::new(DnsCache::new(dns_ttl, dns_overrides));
+    let dns_cache: Arc<crate::dns::cache::DnsCache> = Arc::new(DnsCache::new(dns_ttl, dns_overrides));
     
     // Create shared configuration
     let shared_config = Arc::new(RwLock::new(Configuration {
@@ -63,9 +71,9 @@ pub async fn run(config: EnvConfig) -> Result<()> {
             
             // Start DNS prefetch background task
             let proxies_copy = Arc::new(RwLock::new(config_read.proxies.clone()));
-            let dns_cache_copy = Arc::clone(&dns_cache);
+            let dns_cache_clone: Arc<crate::dns::cache::DnsCache> = Arc::clone(&dns_cache);
             dns::start_dns_prefetch_task(
-                dns_cache_copy,
+                dns_cache_clone,
                 proxies_copy,
                 Duration::from_secs(300) // Check every 5 minutes
             );
@@ -73,7 +81,7 @@ pub async fn run(config: EnvConfig) -> Result<()> {
     }
     
     // Start DNS refresh loop
-    let dns_cache_clone = Arc::clone(&dns_cache);
+    let dns_cache_clone: Arc<crate::dns::cache::DnsCache> = Arc::clone(&dns_cache);
     let shared_config_for_dns = Arc::clone(&shared_config);
     
     let _dns_refresh_handle = tokio::spawn(async move {
@@ -154,7 +162,7 @@ pub async fn run(config: EnvConfig) -> Result<()> {
     let poll_interval = config.db_poll_interval;
     let poll_check_interval = config.db_poll_check_interval;
     let use_incremental_polling = config.db_incremental_polling;
-    let dns_cache_for_polling = Arc::clone(&dns_cache);
+    let dns_cache_for_polling: Arc<crate::dns::cache::DnsCache> = Arc::clone(&dns_cache);
     let shared_config_clone = Arc::clone(&shared_config);
     
     let _polling_handle = tokio::spawn(async move {

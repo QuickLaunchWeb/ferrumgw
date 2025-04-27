@@ -3,6 +3,7 @@ pub mod proto;
 pub mod conversions;
 
 use proto::*;
+use conversions::ConfigSnapshot;
 use tokio::sync::{mpsc, RwLock};
 use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
 use tonic::{Request, Response, Status};
@@ -88,7 +89,7 @@ impl ConfigServiceImpl {
         let config = self.config_store.read().await;
         
         // Create a snapshot of the current configuration
-        let mut snapshot = ConfigSnapshot::from(&*config);
+        let mut snapshot = proto::ConfigSnapshot::from(&*config as &Configuration);
         
         // Set the new version
         let version = self.next_version();
@@ -131,7 +132,7 @@ impl ConfigService for ConfigServiceImpl {
         
         // If client has older or no config, send full snapshot
         if req.current_version < current_version {
-            let mut snapshot = ConfigSnapshot::from(&*config);
+            let mut snapshot = proto::ConfigSnapshot::from(&*config as &Configuration);
             snapshot.version = current_version;
             
             let update = ConfigUpdate {
@@ -162,7 +163,7 @@ impl ConfigService for ConfigServiceImpl {
         let config = self.config_store.read().await;
         
         // Create a snapshot
-        let mut snapshot = ConfigSnapshot::from(&*config);
+        let mut snapshot = proto::ConfigSnapshot::from(&*config as &Configuration);
         snapshot.version = self.get_current_version();
         
         Ok(Response::new(snapshot))

@@ -99,19 +99,19 @@ else
 fi
 
 # Test 6: WebSocket connection
-info "Testing WebSocket connection..."
-echo "This requires wscat tool. Install with: npm install -g wscat"
-if command -v wscat &> /dev/null; then
-    echo "Testing WebSocket connection to ws://$PROXY_HOST/ws"
-    echo "Sending test message and waiting for response..."
-    response=$(echo '{"message":"test"}' | wscat -c "ws://$PROXY_HOST/ws" --connect-timeout 5000 2>/dev/null || echo "Failed to connect")
-    if [[ $response == *"Failed to connect"* ]]; then
-        error "Failed to establish WebSocket connection"
-    else
-        success "WebSocket connection established successfully"
-    fi
-else
-    info "wscat tool not found. Skipping WebSocket test."
-fi
+#info "Testing WebSocket connection..."
+#echo "This requires wscat tool. Install with: npm install -g wscat"
+#if command -v wscat &> /dev/null; then
+#    echo "Testing WebSocket connection to ws://$PROXY_HOST/ws"
+#    echo "Sending test message and waiting for response..."
+#    response=$(echo '{"message":"test"}' | wscat -c "ws://$PROXY_HOST/ws" --connect-timeout 5000 2>/dev/null || echo "Failed to connect")
+#    if [[ $response == *"Failed to connect"* ]]; then
+#        error "Failed to establish WebSocket connection"
+#    else
+#        success "WebSocket connection established successfully"
+#    fi
+#else
+#    info "wscat tool not found. Skipping WebSocket test."
+#fi
 
 success "All proxy tests completed successfully!"

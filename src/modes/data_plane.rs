@@ -33,7 +33,7 @@ pub async fn run(config: EnvConfig) -> Result<()> {
     
     // Get DNS cache configuration
     let dns_ttl = config.dns_cache_ttl_seconds;
-    let dns_overrides = config.dns_overrides.clone().unwrap_or_default();
+    let dns_overrides = config.dns_overrides.clone();
     
     // Create DNS cache
     let dns_cache = Arc::new(DnsCache::new(dns_ttl, dns_overrides));
@@ -73,7 +73,7 @@ pub async fn run(config: EnvConfig) -> Result<()> {
     
     // Start gRPC client to connect to Control Plane
     let shared_config_clone = Arc::clone(&shared_config);
-    let dns_cache_for_grpc = Arc::clone(&dns_cache);
+    let dns_cache_for_grpc: Arc<crate::dns::cache::DnsCache> = Arc::clone(&dns_cache);
     
     let _grpc_client_handle = tokio::spawn(async move {
         let mut connection_retry_delay = Duration::from_secs(1);
@@ -141,7 +141,7 @@ async fn connect_to_control_plane(
     cp_url: &str,
     auth_token: &str, 
     shared_config: Arc<RwLock<Configuration>>,
-    dns_cache: Arc<DnsCache>,
+    dns_cache: Arc<crate::dns::cache::DnsCache>,
     reconnect_notify: mpsc::Sender<()>,
 ) -> Result<()> {
     // Connect to the Control Plane gRPC service

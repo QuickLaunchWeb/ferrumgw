@@ -30,10 +30,10 @@ pub async fn run(config: EnvConfig) -> Result<()> {
     
     // Get DNS cache configuration
     let dns_ttl = config.dns_cache_ttl_seconds;
-    let dns_overrides = config.dns_overrides.clone().unwrap_or_default();
+    let dns_overrides = config.dns_overrides.clone();
     
     // Create DNS cache
-    let dns_cache = Arc::new(DnsCache::new(dns_ttl, dns_overrides));
+    let dns_cache: Arc<crate::dns::cache::DnsCache> = Arc::new(DnsCache::new(dns_ttl, dns_overrides));
     
     // Create shared configuration
     let shared_config = Arc::new(RwLock::new(initial_config));

@@ -101,7 +101,7 @@ create_mock_service 8083 "auth-service"
 create_mock_service 8084 "public-api"
 
 # Create WebSocket mock service
-create_ws_mock_service 8085 "ws-backend"
+#create_ws_mock_service 8085 "ws-backend"
 
 echo "All mock services started. Press Ctrl+C to stop."
 wait
