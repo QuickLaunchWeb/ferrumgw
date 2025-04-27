@@ -2,6 +2,10 @@
 
 Ferrum Gateway is a high-performance, extensible API Gateway and Reverse Proxy built in Rust. It leverages `tokio` for asynchronous processing and `hyper` for HTTP functionality, making it capable of handling high throughput and low latency traffic efficiently.
 
+### NOTE THIS IS A WIP PROJECT, 
+
+Are you a RUST SWE and want to partner or help? Contact us - contact@quicklaunchweb.com 
+
 ## Features
 
 - **High Performance**: Built on Rust and tokio for maximum throughput and minimal latency
