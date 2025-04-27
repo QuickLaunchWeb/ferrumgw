@@ -152,42 +152,124 @@ pub async fn run(config: EnvConfig) -> Result<()> {
     
     // Start configuration polling
     let poll_interval = config.db_poll_interval;
+    let poll_check_interval = config.db_poll_check_interval;
+    let use_incremental_polling = config.db_incremental_polling;
     let dns_cache_for_polling = Arc::clone(&dns_cache);
     let shared_config_clone = Arc::clone(&shared_config);
     
     let _polling_handle = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(poll_interval);
+        let mut last_update_timestamp = shared_config_clone.read().await.last_updated_at;
+        let mut poll_timer = tokio::time::interval(poll_interval);
+        let mut check_timer = tokio::time::interval(poll_check_interval);
         
         loop {
-            interval.tick().await;
-            
-            match db_client.load_full_configuration().await {
-                Ok(new_config) => {
-                    // Validate listen_path uniqueness
-                    if let Err(e) = validate_listen_path_uniqueness(&new_config) {
-                        error!("Configuration validation failed during polling: {}", e);
-                        continue;
-                    }
-                    
-                    // Check if configuration has changed
-                    let current_updated_at = shared_config_clone.read().await.last_updated_at;
-                    if new_config.last_updated_at > current_updated_at {
-                        info!("Configuration changed, updating...");
-                        {
-                            let mut config = shared_config_clone.write().await;
-                            *config = new_config;
+            tokio::select! {
+                // Fast lightweight check for changes
+                _ = check_timer.tick() => {
+                    // Check if there are any changes without downloading full config
+                    match db_client.get_latest_update_timestamp().await {
+                        Ok(latest_timestamp) => {
+                            if latest_timestamp > last_update_timestamp {
+                                debug!("Configuration change detected, update timestamp: {}", latest_timestamp);
+                                
+                                if use_incremental_polling {
+                                    // Use delta updates for efficiency
+                                    match db_client.load_configuration_delta(last_update_timestamp).await {
+                                        Ok(delta) => {
+                                            if !delta.is_empty() {
+                                                info!("Applying incremental configuration update with {} proxies, {} consumers, {} plugin configs",
+                                                    delta.updated_proxies.len() + delta.deleted_proxy_ids.len(),
+                                                    delta.updated_consumers.len() + delta.deleted_consumer_ids.len(),
+                                                    delta.updated_plugin_configs.len() + delta.deleted_plugin_config_ids.len());
+                                                
+                                                // Apply the delta to the shared configuration
+                                                {
+                                                    let mut config = shared_config_clone.write().await;
+                                                    delta.apply_to(&mut *config);
+                                                }
+                                                
+                                                // Update our tracking timestamp
+                                                last_update_timestamp = delta.last_updated_at;
+                                                
+                                                // Check for new backend hosts that need DNS resolution
+                                                let new_hosts = delta.updated_proxies.iter()
+                                                    .filter(|p| p.dns_override.is_none())
+                                                    .map(|p| p.backend_host.clone())
+                                                    .collect::<Vec<_>>();
+                                                
+                                                if !new_hosts.is_empty() {
+                                                    // Warm up DNS cache for new hosts in background
+                                                    for hostname in new_hosts {
+                                                        let dns_cache = Arc::clone(&dns_cache_for_polling);
+                                                        tokio::spawn(async move {
+                                                            if let Err(e) = dns_cache.resolve(&hostname).await {
+                                                                warn!("DNS warmup failed for host {}: {}", hostname, e);
+                                                            } else {
+                                                                debug!("DNS warmup successful for host {}", hostname);
+                                                            }
+                                                        });
+                                                    }
+                                                }
+                                                
+                                                info!("Configuration updated successfully using incremental update");
+                                            } else {
+                                                debug!("Incremental update returned empty delta");
+                                            }
+                                        },
+                                        Err(e) => {
+                                            error!("Failed to load incremental configuration: {}", e);
+                                            
+                                            // Fallback to full config load on next poll
+                                            poll_timer.reset();
+                                        }
+                                    }
+                                } else {
+                                    // Use full config load on next poll
+                                    poll_timer.reset();
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            error!("Failed to check latest update timestamp: {}", e);
                         }
-                        
-                        // After updating the configuration, warm up DNS cache for any new hosts
-                        if let Err(e) = dns::warm_up_dns_cache(&dns_cache_for_polling, &new_config.proxies).await {
-                            warn!("DNS cache warmup failed: {}", e);
-                        }
-                        
-                        info!("Configuration updated successfully");
                     }
                 },
-                Err(e) => {
-                    error!("Failed to load configuration from database: {}", e);
+                
+                // Full configuration reload (less frequent)
+                _ = poll_timer.tick() => {
+                    match db_client.load_full_configuration().await {
+                        Ok(new_config) => {
+                            // Validate listen_path uniqueness
+                            if let Err(e) = validate_listen_path_uniqueness(&new_config) {
+                                error!("Configuration validation failed during polling: {}", e);
+                                continue;
+                            }
+                            
+                            // Check if configuration has changed
+                            if new_config.last_updated_at > last_update_timestamp {
+                                info!("Performing full configuration update");
+                                {
+                                    let mut config = shared_config_clone.write().await;
+                                    *config = new_config;
+                                }
+                                
+                                // Update our tracking timestamp
+                                last_update_timestamp = new_config.last_updated_at;
+                                
+                                // After updating the configuration, warm up DNS cache for any new hosts
+                                if let Err(e) = dns::warm_up_dns_cache(&dns_cache_for_polling, &new_config.proxies).await {
+                                    warn!("DNS cache warmup failed: {}", e);
+                                }
+                                
+                                info!("Configuration updated successfully with full refresh");
+                            } else {
+                                debug!("Full configuration refresh found no changes");
+                            }
+                        },
+                        Err(e) => {
+                            error!("Failed to load configuration from database: {}", e);
+                        }
+                    }
                 }
             }
         }

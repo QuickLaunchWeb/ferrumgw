@@ -5,8 +5,9 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::mysql::MySqlPoolOptions;
 use sqlx::sqlite::SqlitePoolOptions;
 use tracing::{info, error};
+use chrono::{DateTime, Utc};
 
-use crate::config::data_model::{Configuration, DatabaseType, Proxy, Consumer, PluginConfig};
+use crate::config::data_model::{Configuration, DatabaseType, Proxy, Consumer, PluginConfig, ConfigurationDelta};
 
 mod postgres;
 mod mysql;
@@ -87,6 +88,62 @@ impl DatabaseClient {
             DatabaseType::SQLite => {
                 if let DbPool::SQLite(ref pool) = *self.pool {
                     sqlite::load_full_configuration(pool).await
+                } else {
+                    unreachable!("Pool type mismatch with database type")
+                }
+            },
+        }
+    }
+    
+    /// Load configuration changes since a specific timestamp
+    pub async fn load_configuration_delta(&self, since: DateTime<Utc>) -> Result<ConfigurationDelta> {
+        info!("Loading configuration delta since {}", since);
+        
+        match self.db_type {
+            DatabaseType::Postgres => {
+                if let DbPool::Postgres(ref pool) = *self.pool {
+                    postgres::load_configuration_delta(pool, since).await
+                } else {
+                    unreachable!("Pool type mismatch with database type")
+                }
+            },
+            DatabaseType::MySQL => {
+                if let DbPool::MySQL(ref pool) = *self.pool {
+                    mysql::load_configuration_delta(pool, since).await
+                } else {
+                    unreachable!("Pool type mismatch with database type")
+                }
+            },
+            DatabaseType::SQLite => {
+                if let DbPool::SQLite(ref pool) = *self.pool {
+                    sqlite::load_configuration_delta(pool, since).await
+                } else {
+                    unreachable!("Pool type mismatch with database type")
+                }
+            },
+        }
+    }
+    
+    /// Get the latest database update timestamp without fetching the data
+    pub async fn get_latest_update_timestamp(&self) -> Result<DateTime<Utc>> {
+        match self.db_type {
+            DatabaseType::Postgres => {
+                if let DbPool::Postgres(ref pool) = *self.pool {
+                    postgres::get_latest_update_timestamp(pool).await
+                } else {
+                    unreachable!("Pool type mismatch with database type")
+                }
+            },
+            DatabaseType::MySQL => {
+                if let DbPool::MySQL(ref pool) = *self.pool {
+                    mysql::get_latest_update_timestamp(pool).await
+                } else {
+                    unreachable!("Pool type mismatch with database type")
+                }
+            },
+            DatabaseType::SQLite => {
+                if let DbPool::SQLite(ref pool) = *self.pool {
+                    sqlite::get_latest_update_timestamp(pool).await
                 } else {
                     unreachable!("Pool type mismatch with database type")
                 }

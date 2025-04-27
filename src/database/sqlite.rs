@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::config::data_model::{Configuration, Proxy, Consumer, PluginConfig, Protocol, AuthMode};
+use crate::config::data_model::{Configuration, Proxy, Consumer, PluginConfig, Protocol, AuthMode, ConfigurationDelta};
 
 // Module-level functions for use in the DatabaseClient trait
 pub async fn load_full_configuration(pool: &Pool<Sqlite>) -> Result<Configuration> {
@@ -380,6 +380,45 @@ impl SqliteClient {
         .await
         .map_err(|e| anyhow!("Failed to create proxy_plugin_associations table: {}", e))?;
         
+        // Create proxy_deletions table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS proxy_deletions (
+                id TEXT PRIMARY KEY,
+                deleted_at TEXT NOT NULL
+            );
+            "#
+        )
+        .execute(pool)
+        .await
+        .map_err(|e| anyhow!("Failed to create proxy_deletions table: {}", e))?;
+        
+        // Create consumer_deletions table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS consumer_deletions (
+                id TEXT PRIMARY KEY,
+                deleted_at TEXT NOT NULL
+            );
+            "#
+        )
+        .execute(pool)
+        .await
+        .map_err(|e| anyhow!("Failed to create consumer_deletions table: {}", e))?;
+        
+        // Create plugin_config_deletions table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS plugin_config_deletions (
+                id TEXT PRIMARY KEY,
+                deleted_at TEXT NOT NULL
+            );
+            "#
+        )
+        .execute(pool)
+        .await
+        .map_err(|e| anyhow!("Failed to create plugin_config_deletions table: {}", e))?;
+        
         debug!("SQLite tables created/verified");
         
         Ok(())
@@ -751,42 +790,49 @@ impl SqliteClient {
     
     /// Delete a proxy from the database
     pub async fn delete_proxy(&self, proxy_id: &str) -> Result<()> {
-        info!("Deleting proxy from SQLite database: {}", proxy_id);
+        info!("Deleting proxy with ID: {}", proxy_id);
         
-        // Check if proxy exists
-        let exists = sqlx::query!(
-            "SELECT EXISTS(SELECT 1 FROM proxies WHERE id = ?) as exists",
-            proxy_id
-        )
-        .fetch_one(&self.pool)
-        .await
-        .context("Failed to check proxy existence")?
-        .exists;
-        
-        if exists == 0 {
-            return Err(anyhow!("Proxy with ID '{}' does not exist", proxy_id));
-        }
-        
-        // Start a transaction
+        // Begin a transaction
         let mut tx = self.pool.begin().await.context("Failed to begin transaction")?;
         
-        // Delete plugin associations first (due to foreign key constraint)
+        // First, delete any plugin associations
         sqlx::query!(
-            "DELETE FROM proxy_plugin_associations WHERE proxy_id = ?",
+            r#"
+            DELETE FROM proxy_plugin_associations
+            WHERE proxy_id = ?1
+            "#,
             proxy_id
         )
         .execute(&mut *tx)
         .await
-        .context("Failed to delete plugin associations")?;
+        .context("Failed to delete proxy plugin associations")?;
         
-        // Delete the proxy
-        sqlx::query!(
-            "DELETE FROM proxies WHERE id = ?",
+        // Then delete the proxy itself
+        let delete_result = sqlx::query!(
+            r#"
+            DELETE FROM proxies
+            WHERE id = ?1
+            "#,
             proxy_id
         )
         .execute(&mut *tx)
         .await
         .context("Failed to delete proxy")?;
+        
+        // Insert into proxy_deletions table for incremental updates
+        if delete_result.rows_affected() > 0 {
+            sqlx::query!(
+                r#"
+                INSERT INTO proxy_deletions (id, deleted_at)
+                VALUES (?1, CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO UPDATE SET deleted_at = CURRENT_TIMESTAMP
+                "#,
+                proxy_id
+            )
+            .execute(&mut *tx)
+            .await
+            .context("Failed to track proxy deletion")?;
+        }
         
         // Commit the transaction
         tx.commit().await.context("Failed to commit transaction")?;
@@ -935,42 +981,37 @@ impl SqliteClient {
     
     /// Delete a consumer from the database
     pub async fn delete_consumer(&self, consumer_id: &str) -> Result<()> {
-        info!("Deleting consumer from SQLite database: {}", consumer_id);
+        info!("Deleting consumer with ID: {}", consumer_id);
         
-        // Check if consumer exists
-        let exists = sqlx::query!(
-            "SELECT EXISTS(SELECT 1 FROM consumers WHERE id = ?) as exists",
-            consumer_id
-        )
-        .fetch_one(&self.pool)
-        .await
-        .context("Failed to check consumer existence")?
-        .exists;
-        
-        if exists == 0 {
-            return Err(anyhow!("Consumer with ID '{}' does not exist", consumer_id));
-        }
-        
-        // Start a transaction
+        // Begin a transaction
         let mut tx = self.pool.begin().await.context("Failed to begin transaction")?;
         
-        // Delete related plugin configs first
-        sqlx::query!(
-            "DELETE FROM plugin_configs WHERE consumer_id = ?",
-            consumer_id
-        )
-        .execute(&mut *tx)
-        .await
-        .context("Failed to delete related plugin configurations")?;
-        
         // Delete the consumer
-        sqlx::query!(
-            "DELETE FROM consumers WHERE id = ?",
+        let delete_result = sqlx::query!(
+            r#"
+            DELETE FROM consumers
+            WHERE id = ?1
+            "#,
             consumer_id
         )
         .execute(&mut *tx)
         .await
         .context("Failed to delete consumer")?;
+        
+        // Insert into consumer_deletions table for incremental updates
+        if delete_result.rows_affected() > 0 {
+            sqlx::query!(
+                r#"
+                INSERT INTO consumer_deletions (id, deleted_at)
+                VALUES (?1, CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO UPDATE SET deleted_at = CURRENT_TIMESTAMP
+                "#,
+                consumer_id
+            )
+            .execute(&mut *tx)
+            .await
+            .context("Failed to track consumer deletion")?;
+        }
         
         // Commit the transaction
         tx.commit().await.context("Failed to commit transaction")?;
@@ -1069,47 +1110,266 @@ impl SqliteClient {
     
     /// Delete a plugin configuration from the database
     pub async fn delete_plugin_config(&self, plugin_config_id: &str) -> Result<()> {
-        info!("Deleting plugin configuration from SQLite database: {}", plugin_config_id);
+        info!("Deleting plugin configuration with ID: {}", plugin_config_id);
         
-        // Check if plugin config exists
-        let exists = sqlx::query!(
-            "SELECT EXISTS(SELECT 1 FROM plugin_configs WHERE id = ?) as exists",
-            plugin_config_id
-        )
-        .fetch_one(&self.pool)
-        .await
-        .context("Failed to check plugin config existence")?
-        .exists;
-        
-        if exists == 0 {
-            return Err(anyhow!("Plugin configuration with ID '{}' does not exist", plugin_config_id));
-        }
-        
-        // Start a transaction
+        // Begin a transaction
         let mut tx = self.pool.begin().await.context("Failed to begin transaction")?;
         
-        // Delete any proxy plugin associations first
+        // First, delete any proxy associations
         sqlx::query!(
-            "DELETE FROM proxy_plugin_associations WHERE plugin_config_id = ?",
+            r#"
+            DELETE FROM proxy_plugin_associations
+            WHERE plugin_config_id = ?1
+            "#,
             plugin_config_id
         )
         .execute(&mut *tx)
         .await
-        .context("Failed to delete proxy plugin associations")?;
+        .context("Failed to delete plugin-proxy associations")?;
         
-        // Delete the plugin config
-        sqlx::query!(
-            "DELETE FROM plugin_configs WHERE id = ?",
+        // Then delete the plugin config itself
+        let delete_result = sqlx::query!(
+            r#"
+            DELETE FROM plugin_configs
+            WHERE id = ?1
+            "#,
             plugin_config_id
         )
         .execute(&mut *tx)
         .await
         .context("Failed to delete plugin configuration")?;
         
+        // Insert into plugin_config_deletions table for incremental updates
+        if delete_result.rows_affected() > 0 {
+            sqlx::query!(
+                r#"
+                INSERT INTO plugin_config_deletions (id, deleted_at)
+                VALUES (?1, CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO UPDATE SET deleted_at = CURRENT_TIMESTAMP
+                "#,
+                plugin_config_id
+            )
+            .execute(&mut *tx)
+            .await
+            .context("Failed to track plugin config deletion")?;
+        }
+        
         // Commit the transaction
         tx.commit().await.context("Failed to commit transaction")?;
         
         info!("Deleted plugin configuration with ID: {}", plugin_config_id);
         Ok(())
+    }
+
+    /// Get the latest update timestamp from the database
+    pub async fn get_latest_update_timestamp(&self) -> Result<DateTime<Utc>> {
+        debug!("Getting latest update timestamp from SQLite database");
+        
+        // Use a query that combines the latest timestamps from all tables
+        let result = sqlx::query!(
+            r#"
+            SELECT MAX(latest_time) as "max_time: DateTime<Utc>"
+            FROM (
+                SELECT MAX(updated_at) as latest_time FROM proxies
+                UNION ALL
+                SELECT MAX(updated_at) as latest_time FROM consumers
+                UNION ALL
+                SELECT MAX(updated_at) as latest_time FROM plugin_configs
+            ) as latest_updates
+            "#
+        )
+        .fetch_one(&self.pool)
+        .await
+        .context("Failed to get latest update timestamp")?;
+        
+        // If there are no records, return the current time
+        match result.max_time {
+            Some(time) => Ok(time),
+            None => Ok(Utc::now()),
+        }
+    }
+
+    /// Load configuration changes since a specific timestamp
+    pub async fn load_configuration_delta(&self, since: DateTime<Utc>) -> Result<ConfigurationDelta> {
+        info!("Loading configuration delta from SQLite database since {}", since);
+        
+        // Begin a transaction to ensure consistent data
+        let mut tx = self.pool.begin().await.context("Failed to begin transaction")?;
+        
+        // Load updated proxies
+        let updated_proxies = sqlx::query_as!(
+            Proxy,
+            r#"
+            SELECT 
+                id,
+                name, listen_path, backend_protocol as "backend_protocol: String", 
+                backend_host, backend_port, backend_path,
+                strip_listen_path, preserve_host_header,
+                backend_connect_timeout_ms, backend_read_timeout_ms, backend_write_timeout_ms,
+                backend_tls_client_cert_path, backend_tls_client_key_path, backend_tls_verify_server_cert,
+                backend_tls_server_ca_cert_path, 
+                dns_override, dns_cache_ttl_seconds,
+                auth_mode as "auth_mode: String",
+                created_at as "created_at: DateTime<Utc>", 
+                updated_at as "updated_at: DateTime<Utc>"
+            FROM proxies
+            WHERE updated_at > ?1
+            ORDER BY updated_at
+            "#,
+            since
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .context("Failed to fetch updated proxies from database")?;
+        
+        // Parse the protocol and auth_mode strings to enums for updated proxies
+        let mut processed_proxies = Vec::with_capacity(updated_proxies.len());
+        for mut proxy in updated_proxies {
+            proxy.backend_protocol = match proxy.backend_protocol.as_str() {
+                "http" => Protocol::Http,
+                "https" => Protocol::Https,
+                "ws" => Protocol::Ws,
+                "wss" => Protocol::Wss,
+                "grpc" => Protocol::Grpc,
+                _ => Protocol::Http,
+            };
+            
+            proxy.auth_mode = match proxy.auth_mode.as_str() {
+                "multi" => AuthMode::Multi,
+                _ => AuthMode::Single,
+            };
+            
+            // Load any plugin associations for this proxy
+            proxy.plugins = sqlx::query_as!(
+                PluginAssociation,
+                r#"
+                SELECT plugin_config_id, embedded_config as "embedded_config: Value"
+                FROM proxy_plugin_associations
+                WHERE proxy_id = ?1
+                "#,
+                proxy.id
+            )
+            .fetch_all(&mut *tx)
+            .await
+            .context("Failed to fetch plugin associations")?;
+            
+            processed_proxies.push(proxy);
+        }
+        
+        // Get IDs of deleted proxies
+        let deleted_proxy_ids = sqlx::query!(
+            r#"
+            SELECT id
+            FROM proxy_deletions
+            WHERE deleted_at > ?1
+            "#,
+            since
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .context("Failed to fetch deleted proxy IDs")?
+        .into_iter()
+        .map(|row| row.id)
+        .collect::<Vec<String>>();
+        
+        // Load updated consumers
+        let updated_consumers = sqlx::query_as!(
+            Consumer,
+            r#"
+            SELECT 
+                id, username, custom_id,
+                credentials as "credentials: Value",
+                created_at as "created_at: DateTime<Utc>", 
+                updated_at as "updated_at: DateTime<Utc>"
+            FROM consumers
+            WHERE updated_at > ?1
+            ORDER BY updated_at
+            "#,
+            since
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .context("Failed to fetch updated consumers from database")?;
+        
+        // Get IDs of deleted consumers
+        let deleted_consumer_ids = sqlx::query!(
+            r#"
+            SELECT id
+            FROM consumer_deletions
+            WHERE deleted_at > ?1
+            "#,
+            since
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .context("Failed to fetch deleted consumer IDs")?
+        .into_iter()
+        .map(|row| row.id)
+        .collect::<Vec<String>>();
+        
+        // Load updated plugin configs
+        let updated_plugin_configs = sqlx::query_as!(
+            PluginConfig,
+            r#"
+            SELECT 
+                id, plugin_name,
+                config as "config: Value",
+                scope as "scope: String",
+                proxy_id,
+                enabled,
+                created_at as "created_at: DateTime<Utc>", 
+                updated_at as "updated_at: DateTime<Utc>"
+            FROM plugin_configs
+            WHERE updated_at > ?1
+            ORDER BY updated_at
+            "#,
+            since
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .context("Failed to fetch updated plugin configs from database")?;
+        
+        // Parse the scope enum
+        let mut processed_plugin_configs = Vec::with_capacity(updated_plugin_configs.len());
+        for mut plugin_config in updated_plugin_configs {
+            plugin_config.scope = match plugin_config.scope.as_str() {
+                "proxy" => crate::config::data_model::PluginScope::Proxy,
+                _ => crate::config::data_model::PluginScope::Global,
+            };
+            
+            processed_plugin_configs.push(plugin_config);
+        }
+        
+        // Get IDs of deleted plugin configs
+        let deleted_plugin_config_ids = sqlx::query!(
+            r#"
+            SELECT id
+            FROM plugin_config_deletions
+            WHERE deleted_at > ?1
+            "#,
+            since
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .context("Failed to fetch deleted plugin config IDs")?
+        .into_iter()
+        .map(|row| row.id)
+        .collect::<Vec<String>>();
+        
+        // Get the latest update timestamp
+        let latest_timestamp = self.get_latest_update_timestamp().await?;
+        
+        // Commit the transaction
+        tx.commit().await.context("Failed to commit transaction")?;
+        
+        Ok(ConfigurationDelta {
+            updated_proxies: processed_proxies,
+            deleted_proxy_ids,
+            updated_consumers,
+            deleted_consumer_ids,
+            updated_plugin_configs: processed_plugin_configs,
+            deleted_plugin_config_ids,
+            last_updated_at: latest_timestamp,
+        })
     }
 }

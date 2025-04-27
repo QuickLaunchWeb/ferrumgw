@@ -102,35 +102,174 @@ pub async fn run(config: EnvConfig) -> Result<()> {
     
     // Start configuration polling
     let poll_interval = config.db_poll_interval;
-    let db_client_clone = db_client.clone();
-    let shared_config_clone = Arc::clone(&shared_config);
+    let poll_check_interval = config.db_poll_check_interval;
+    let use_incremental_polling = config.db_incremental_polling;
+    let dns_cache_for_polling = Arc::clone(&dns_cache);
+    let config_service_clone = Arc::clone(&shared_config);
     
-    let polling_handle = tokio::spawn(async move {
-        let mut interval = time::interval(poll_interval);
+    let _polling_handle = tokio::spawn(async move {
+        let mut last_update_timestamp = {
+            let config = config_service_clone.read().await;
+            config.last_updated_at
+        };
+        let mut poll_timer = tokio::time::interval(poll_interval);
+        let mut check_timer = tokio::time::interval(poll_check_interval);
         
         loop {
-            interval.tick().await;
-            
-            match db_client_clone.load_full_configuration().await {
-                Ok(new_config) => {
-                    // Compare timestamps to see if there are updates
-                    let update_needed = {
-                        let current_config = shared_config_clone.read().await;
-                        new_config.last_updated_at > current_config.last_updated_at
-                    };
-                    
-                    if update_needed {
-                        info!("Configuration update detected, applying changes");
-                        let mut writable_config = shared_config_clone.write().await;
-                        *writable_config = new_config;
-                        
-                        // The gRPC server will automatically push updates to connected
-                        // Data Plane nodes when the shared configuration changes
+            tokio::select! {
+                // Fast lightweight check for changes
+                _ = check_timer.tick() => {
+                    // Check if there are any changes without downloading full config
+                    match db_client.get_latest_update_timestamp().await {
+                        Ok(latest_timestamp) => {
+                            if latest_timestamp > last_update_timestamp {
+                                debug!("Configuration change detected, update timestamp: {}", latest_timestamp);
+                                
+                                if use_incremental_polling {
+                                    // Use delta updates for efficiency
+                                    match db_client.load_configuration_delta(last_update_timestamp).await {
+                                        Ok(delta) => {
+                                            if !delta.is_empty() {
+                                                info!("Applying incremental configuration update with {} proxies, {} consumers, {} plugin configs",
+                                                    delta.updated_proxies.len() + delta.deleted_proxy_ids.len(),
+                                                    delta.updated_consumers.len() + delta.deleted_consumer_ids.len(),
+                                                    delta.updated_plugin_configs.len() + delta.deleted_plugin_config_ids.len());
+                                                
+                                                // Apply the delta to the shared configuration
+                                                {
+                                                    let mut config = config_service_clone.write().await;
+                                                    delta.apply_to(&mut *config);
+                                                }
+                                                
+                                                // Convert the delta to a proto delta for data plane subscribers
+                                                // This requires building a ConfigDelta proto from our delta struct
+                                                let proto_delta = crate::proto::ConfigDelta {
+                                                    upsert_proxies: delta.updated_proxies.iter().map(crate::proto::Proxy::from).collect(),
+                                                    remove_proxy_ids: delta.deleted_proxy_ids.clone(),
+                                                    upsert_consumers: delta.updated_consumers.iter().map(crate::proto::Consumer::from).collect(),
+                                                    remove_consumer_ids: delta.deleted_consumer_ids.clone(),
+                                                    upsert_plugin_configs: delta.updated_plugin_configs.iter().map(crate::proto::PluginConfig::from).collect(),
+                                                    remove_plugin_config_ids: delta.deleted_plugin_config_ids.clone(),
+                                                };
+                                                
+                                                // Create a ConfigUpdate with delta
+                                                let update = crate::proto::ConfigUpdate {
+                                                    update_type: crate::proto::UpdateType::Delta as i32,
+                                                    version: last_update_timestamp.timestamp_millis(),
+                                                    updated_at: delta.last_updated_at.to_rfc3339(),
+                                                    update: Some(crate::proto::config_update::Update::Delta(proto_delta)),
+                                                };
+                                                
+                                                // Send the delta update to all DP subscribers
+                                                if let Err(e) = grpc_server.push_config_update(update).await {
+                                                    error!("Failed to push delta config update to subscribers: {}", e);
+                                                }
+                                                
+                                                // Update our tracking timestamp
+                                                last_update_timestamp = delta.last_updated_at;
+                                                
+                                                // Check for new backend hosts that need DNS resolution
+                                                let new_hosts = delta.updated_proxies.iter()
+                                                    .filter(|p| p.dns_override.is_none())
+                                                    .map(|p| p.backend_host.clone())
+                                                    .collect::<Vec<_>>();
+                                                
+                                                if !new_hosts.is_empty() {
+                                                    // Warm up DNS cache for new hosts in background
+                                                    for hostname in new_hosts {
+                                                        let dns_cache = Arc::clone(&dns_cache_for_polling);
+                                                        tokio::spawn(async move {
+                                                            if let Err(e) = dns_cache.resolve(&hostname).await {
+                                                                warn!("DNS warmup failed for host {}: {}", hostname, e);
+                                                            } else {
+                                                                debug!("DNS warmup successful for host {}", hostname);
+                                                            }
+                                                        });
+                                                    }
+                                                }
+                                                
+                                                info!("Configuration updated and propagated successfully using incremental update");
+                                            } else {
+                                                debug!("Incremental update returned empty delta");
+                                            }
+                                        },
+                                        Err(e) => {
+                                            error!("Failed to load incremental configuration: {}", e);
+                                            
+                                            // Fallback to full config load
+                                            poll_timer.reset();
+                                        }
+                                    }
+                                } else {
+                                    // Use full config load
+                                    poll_timer.reset();
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            error!("Failed to check latest update timestamp: {}", e);
+                        }
                     }
                 },
-                Err(e) => {
-                    warn!("Failed to poll configuration from database: {}", e);
-                    // Continue operation with existing configuration
+                
+                // Full configuration reload (less frequent)
+                _ = poll_timer.tick() => {
+                    match db_client.load_full_configuration().await {
+                        Ok(new_config) => {
+                            // Validate listen_path uniqueness
+                            if let Err(e) = crate::modes::database::validate_listen_path_uniqueness(&new_config) {
+                                error!("Configuration validation failed during polling: {}", e);
+                                continue;
+                            }
+                            
+                            // Check if configuration has changed
+                            let current_updated_at = {
+                                let config = config_service_clone.read().await;
+                                config.last_updated_at
+                            };
+                            
+                            if new_config.last_updated_at > current_updated_at {
+                                info!("Performing full configuration update");
+                                
+                                // Update local configuration
+                                {
+                                    let mut config = config_service_clone.write().await;
+                                    *config = new_config.clone();
+                                }
+                                
+                                // Create full snapshot for data plane nodes
+                                let snapshot = crate::proto::ConfigSnapshot::from(&new_config);
+                                
+                                // Create a config update with full snapshot
+                                let update = crate::proto::ConfigUpdate {
+                                    update_type: crate::proto::UpdateType::Full as i32,
+                                    version: new_config.last_updated_at.timestamp_millis(),
+                                    updated_at: new_config.last_updated_at.to_rfc3339(),
+                                    update: Some(crate::proto::config_update::Update::FullSnapshot(snapshot)),
+                                };
+                                
+                                // Push full config update to subscribers
+                                if let Err(e) = grpc_server.push_config_update(update).await {
+                                    error!("Failed to push full config update to subscribers: {}", e);
+                                }
+                                
+                                // Update our tracking timestamp
+                                last_update_timestamp = new_config.last_updated_at;
+                                
+                                // After updating the configuration, warm up DNS cache for any new hosts
+                                if let Err(e) = dns::warm_up_dns_cache(&dns_cache_for_polling, &new_config.proxies).await {
+                                    warn!("DNS cache warmup failed: {}", e);
+                                }
+                                
+                                info!("Configuration updated and propagated successfully with full refresh");
+                            } else {
+                                debug!("Full configuration refresh found no changes");
+                            }
+                        },
+                        Err(e) => {
+                            error!("Failed to load configuration from database: {}", e);
+                        }
+                    }
                 }
             }
         }
@@ -535,6 +674,47 @@ pub mod grpc {
                 .map_err(|e| anyhow!("gRPC server error: {}", e))?;
             
             // This should never be reached
+            Ok(())
+        }
+        
+        async fn push_config_update(&self, update: crate::proto::ConfigUpdate) -> Result<(), Status> {
+            // Get a copy of the clients hashmap
+            let clients = self.shared_config.read().await.clients.lock().unwrap().clone();
+            
+            // Drop the lock to avoid holding it during potentially slow broadcast
+            drop(self.shared_config);
+            
+            if clients.is_empty() {
+                debug!("No connected Data Plane nodes to broadcast configuration update to");
+                return Ok(());
+            }
+            
+            info!("Broadcasting configuration update (v{}) to {} Data Plane nodes", 
+                update.version, clients.len());
+            
+            let mut disconnected_clients = Vec::new();
+            
+            // Send the update to each client
+            for (client_id, sender) in clients.iter() {
+                if let Err(_) = sender.send(Ok(update.clone())).await {
+                    // Client is disconnected, mark for removal
+                    warn!("Data Plane node {} is disconnected, will remove", client_id);
+                    disconnected_clients.push(client_id.clone());
+                } else {
+                    debug!("Sent configuration update to Data Plane node {}", client_id);
+                }
+            }
+            
+            // Remove disconnected clients
+            if !disconnected_clients.is_empty() {
+                let mut clients = self.shared_config.write().await.clients.lock().unwrap();
+                for client_id in disconnected_clients {
+                    clients.remove(&client_id);
+                }
+                info!("Removed {} disconnected Data Plane nodes, {} nodes remain connected", 
+                    disconnected_clients.len(), clients.len());
+            }
+            
             Ok(())
         }
     }

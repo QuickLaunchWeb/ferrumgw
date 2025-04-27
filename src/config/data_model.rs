@@ -118,6 +118,78 @@ pub struct Configuration {
     pub last_updated_at: DateTime<Utc>,
 }
 
+/// Represents incremental changes to the configuration since a specific timestamp
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigurationDelta {
+    /// New or updated proxies
+    pub updated_proxies: Vec<Proxy>,
+    /// IDs of proxies that were deleted
+    pub deleted_proxy_ids: Vec<String>,
+    
+    /// New or updated consumers
+    pub updated_consumers: Vec<Consumer>,
+    /// IDs of consumers that were deleted
+    pub deleted_consumer_ids: Vec<String>,
+    
+    /// New or updated plugin configurations
+    pub updated_plugin_configs: Vec<PluginConfig>,
+    /// IDs of plugin configurations that were deleted
+    pub deleted_plugin_config_ids: Vec<String>,
+    
+    /// The timestamp of the latest change in this delta
+    pub last_updated_at: DateTime<Utc>,
+}
+
+impl ConfigurationDelta {
+    /// Apply this delta to the given configuration
+    pub fn apply_to(&self, config: &mut Configuration) {
+        // Apply proxy changes
+        for proxy in &self.updated_proxies {
+            if let Some(existing) = config.proxies.iter_mut().find(|p| p.id == proxy.id) {
+                *existing = proxy.clone();
+            } else {
+                config.proxies.push(proxy.clone());
+            }
+        }
+        config.proxies.retain(|p| !self.deleted_proxy_ids.contains(&p.id));
+        
+        // Apply consumer changes
+        for consumer in &self.updated_consumers {
+            if let Some(existing) = config.consumers.iter_mut().find(|c| c.id == consumer.id) {
+                *existing = consumer.clone();
+            } else {
+                config.consumers.push(consumer.clone());
+            }
+        }
+        config.consumers.retain(|c| !self.deleted_consumer_ids.contains(&c.id));
+        
+        // Apply plugin config changes
+        for plugin_config in &self.updated_plugin_configs {
+            if let Some(existing) = config.plugin_configs.iter_mut().find(|p| p.id == plugin_config.id) {
+                *existing = plugin_config.clone();
+            } else {
+                config.plugin_configs.push(plugin_config.clone());
+            }
+        }
+        config.plugin_configs.retain(|p| !self.deleted_plugin_config_ids.contains(&p.id));
+        
+        // Update the last_updated_at timestamp
+        if self.last_updated_at > config.last_updated_at {
+            config.last_updated_at = self.last_updated_at;
+        }
+    }
+    
+    /// Check if this delta is empty (no changes)
+    pub fn is_empty(&self) -> bool {
+        self.updated_proxies.is_empty() &&
+        self.deleted_proxy_ids.is_empty() &&
+        self.updated_consumers.is_empty() &&
+        self.deleted_consumer_ids.is_empty() &&
+        self.updated_plugin_configs.is_empty() &&
+        self.deleted_plugin_config_ids.is_empty()
+    }
+}
+
 fn default_true() -> bool {
     true
 }

@@ -48,6 +48,8 @@ pub struct EnvConfig {
     pub db_type: Option<DatabaseType>,
     pub db_url: Option<String>,
     pub db_poll_interval: Duration,
+    pub db_incremental_polling: bool,
+    pub db_poll_check_interval: Duration,
     
     // File mode settings
     pub file_config_path: Option<String>,
@@ -126,7 +128,9 @@ impl EnvConfig {
             dp_grpc_auth_token,
             db_type: None,
             db_url: None,
-            db_poll_interval: Duration::from_secs(15),
+            db_poll_interval: Duration::from_secs(30),
+            db_incremental_polling: true,
+            db_poll_check_interval: Duration::from_secs(5),
             file_config_path: None,
             cp_grpc_listen_addr: None,
             dp_cp_grpc_url: None,
@@ -188,6 +192,16 @@ impl EnvConfig {
         }
         
         // Database settings
+        let db_poll_interval = Self::parse_duration_with_default("FERRUM_DB_POLL_INTERVAL", 30)?;
+        let db_incremental_polling = env::var("FERRUM_DB_INCREMENTAL_POLLING")
+            .map(|v| v.to_lowercase() == "true" || v == "1")
+            .unwrap_or(true); // Default to true for better performance
+        let db_poll_check_interval = Self::parse_duration_with_default("FERRUM_DB_POLL_CHECK_INTERVAL", 5)?;
+        
+        config.db_poll_interval = db_poll_interval;
+        config.db_incremental_polling = db_incremental_polling;
+        config.db_poll_check_interval = db_poll_check_interval;
+        
         let (db_type, db_url) = match config.mode {
             OperationMode::Database | OperationMode::ControlPlane => {
                 let db_type_str = env::var("FERRUM_DB_TYPE")
@@ -213,13 +227,6 @@ impl EnvConfig {
         
         config.db_type = db_type;
         config.db_url = db_url;
-        
-        let db_poll_interval = Self::parse_duration_with_default(
-            "FERRUM_DB_POLL_INTERVAL_SECONDS", 
-            15
-        )?;
-        
-        config.db_poll_interval = db_poll_interval;
         
         // File mode settings
         config.file_config_path = match config.mode {
