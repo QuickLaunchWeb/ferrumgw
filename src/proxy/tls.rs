@@ -56,11 +56,14 @@ pub fn load_server_config(cert_path: &str, key_path: &str) -> Result<Arc<ServerC
     };
     
     // Create a server config
-    let config = ServerConfig::builder()
+    let mut config = ServerConfig::builder()
         .with_safe_defaults()
         .with_no_client_auth()
         .with_single_cert(cert_chain, private_key)
         .context("Failed to create TLS server config")?;
+    
+    // Enable ALPN protocols (HTTP/1.1, HTTP/2)
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
     
     Ok(Arc::new(config))
 }

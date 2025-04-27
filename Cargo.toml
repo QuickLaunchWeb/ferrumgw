@@ -17,6 +17,10 @@ tokio-tungstenite = "0.19"
 hyper = { version = "0.14", features = ["full"] }
 hyper-tls = "0.5"
 http = "0.2"
+h3 = { version = "0.0.2", features = ["server"] }
+h3-quinn = "0.0.2"
+quinn = "0.9"
+bytes = "1.4"
 
 # gRPC Framework
 tonic = "0.9"

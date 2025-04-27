@@ -29,11 +29,13 @@ pub struct EnvConfig {
     // Network ports & TLS settings
     pub proxy_http_port: Option<u16>,
     pub proxy_https_port: Option<u16>,
+    pub proxy_http3_port: Option<u16>,
     pub proxy_tls_cert_path: Option<String>,
     pub proxy_tls_key_path: Option<String>,
     
     pub admin_http_port: Option<u16>,
     pub admin_https_port: Option<u16>,
+    pub admin_http3_port: Option<u16>,
     pub admin_tls_cert_path: Option<String>,
     pub admin_tls_key_path: Option<String>,
     
@@ -89,8 +91,10 @@ impl EnvConfig {
         // Network ports (with defaults)
         let proxy_http_port = Self::parse_optional_port("FERRUM_PROXY_HTTP_PORT", Some(8000))?;
         let proxy_https_port = Self::parse_optional_port("FERRUM_PROXY_HTTPS_PORT", Some(8443))?;
+        let proxy_http3_port = Self::parse_optional_port("FERRUM_PROXY_HTTP3_PORT", Some(8444))?;
         let admin_http_port = Self::parse_optional_port("FERRUM_ADMIN_HTTP_PORT", Some(9000))?;
         let admin_https_port = Self::parse_optional_port("FERRUM_ADMIN_HTTPS_PORT", Some(9443))?;
+        let admin_http3_port = Self::parse_optional_port("FERRUM_ADMIN_HTTP3_PORT", Some(9444))?;
         
         // TLS paths
         let proxy_tls_cert_path = env::var("FERRUM_PROXY_TLS_CERT_PATH").ok();
@@ -109,10 +113,12 @@ impl EnvConfig {
             log_level,
             proxy_http_port,
             proxy_https_port,
+            proxy_http3_port,
             proxy_tls_cert_path,
             proxy_tls_key_path,
             admin_http_port,
             admin_https_port,
+            admin_http3_port,
             admin_tls_cert_path,
             admin_tls_key_path,
             admin_jwt_secret,
