@@ -3,12 +3,14 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::time;
 use anyhow::{Result, Context};
-use tracing::{info, warn, error};
+use tracing::{info, warn, error, debug};
 
 use crate::config::env_config::EnvConfig;
 use crate::config::data_model::Configuration;
 use crate::database::DatabaseClient;
 use crate::admin::AdminServer;
+use crate::dns::{self, DnsCache}; // Add DNS module
+use chrono::Utc;
 
 pub async fn run(config: EnvConfig) -> Result<()> {
     info!("Starting Ferrum Gateway in Control Plane mode");
@@ -21,6 +23,13 @@ pub async fn run(config: EnvConfig) -> Result<()> {
     let db_client = DatabaseClient::new(db_type, &db_url)
         .await
         .context("Failed to create database client")?;
+    
+    // Get DNS cache configuration
+    let dns_ttl = config.dns_cache_ttl_seconds;
+    let dns_overrides = config.dns_overrides.clone().unwrap_or_default();
+    
+    // Create DNS cache - Control Plane can benefit from DNS caching for health checks
+    let dns_cache = Arc::new(DnsCache::new(dns_ttl, dns_overrides));
     
     // Create shared configuration
     let shared_config = Arc::new(RwLock::new(Configuration {
@@ -36,6 +45,22 @@ pub async fn run(config: EnvConfig) -> Result<()> {
         .context("Failed to load initial configuration from database")?;
     
     *shared_config.write().await = initial_config.clone();
+    
+    // Warm up DNS cache for health checks and service discovery
+    if !initial_config.proxies.is_empty() {
+        if let Err(e) = dns::warm_up_dns_cache(&dns_cache, &initial_config.proxies).await {
+            warn!("DNS cache warmup failed: {}", e);
+        }
+        
+        // Start DNS prefetch background task
+        let proxies_copy = Arc::new(RwLock::new(initial_config.proxies.clone()));
+        let dns_cache_copy = Arc::clone(&dns_cache);
+        dns::start_dns_prefetch_task(
+            dns_cache_copy,
+            proxies_copy,
+            Duration::from_secs(300) // Check every 5 minutes
+        );
+    }
     
     // Start admin server
     info!("Starting admin server");

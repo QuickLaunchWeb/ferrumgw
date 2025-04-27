@@ -11,7 +11,7 @@ use crate::config::env_config::EnvConfig;
 use crate::config::data_model::Configuration;
 use crate::proxy::ProxyServer;
 use crate::grpc::config_client::ConfigClient;
-use crate::dns::cache::DnsCache;
+use crate::dns::{self, DnsCache};
 
 pub async fn run(config: EnvConfig) -> Result<()> {
     info!("Starting Ferrum Gateway in Data Plane mode");
@@ -41,6 +41,19 @@ pub async fn run(config: EnvConfig) -> Result<()> {
     // Create shared configuration
     let shared_config = Arc::new(RwLock::new(initial_config));
     
+    // Initialize DNS prefetch task
+    {
+        // Start DNS prefetch background task with empty proxies initially
+        // It will be updated as configurations come in from the control plane
+        let proxies_copy = Arc::new(RwLock::new(Vec::new()));
+        let dns_cache_copy = Arc::clone(&dns_cache);
+        dns::start_dns_prefetch_task(
+            dns_cache_copy,
+            proxies_copy,
+            Duration::from_secs(300) // Check every 5 minutes
+        );
+    }
+    
     // Start proxy server with the configuration
     info!("Starting proxy server");
     let proxy_server = ProxyServer::new(
@@ -57,39 +70,6 @@ pub async fn run(config: EnvConfig) -> Result<()> {
     
     // Create a channel for reconnect notifications
     let (reconnect_notify_tx, mut reconnect_notify_rx) = mpsc::channel(1);
-    
-    // Start DNS refresh loop
-    let dns_cache_clone = Arc::clone(&dns_cache);
-    let shared_config_for_dns = Arc::clone(&shared_config);
-    
-    let _dns_refresh_handle = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(60));
-        
-        loop {
-            interval.tick().await;
-            
-            // Refresh DNS cache entries that are expiring soon
-            let config = shared_config_for_dns.read().await;
-            
-            if !config.proxies.is_empty() {
-                debug!("Refreshing DNS cache entries");
-                
-                for proxy in &config.proxies {
-                    if let Some(dns_override) = &proxy.dns_override {
-                        // Skip proxies with explicit overrides
-                        continue;
-                    }
-                    
-                    // Get the TTL for this proxy, or fall back to global TTL
-                    let ttl = proxy.dns_cache_ttl_seconds.unwrap_or(dns_ttl);
-                    
-                    // Refresh only if the entry will expire in the next minute
-                    // This is a prefetch strategy to avoid cache misses
-                    dns_cache_clone.prefetch(&proxy.backend_host, ttl).await;
-                }
-            }
-        }
-    });
     
     // Start gRPC client to connect to Control Plane
     let shared_config_clone = Arc::clone(&shared_config);
@@ -159,10 +139,10 @@ pub async fn run(config: EnvConfig) -> Result<()> {
 /// Connect to the control plane and start receiving configuration updates
 async fn connect_to_control_plane(
     cp_url: &str,
-    auth_token: &str,
+    auth_token: &str, 
     shared_config: Arc<RwLock<Configuration>>,
     dns_cache: Arc<DnsCache>,
-    reconnect_notify: tokio::sync::mpsc::Sender<()>,
+    reconnect_notify: mpsc::Sender<()>,
 ) -> Result<()> {
     // Connect to the Control Plane gRPC service
     info!("Connecting to Control Plane gRPC service at {}", cp_url);
@@ -182,7 +162,9 @@ async fn connect_to_control_plane(
             }
             
             // Warm up DNS cache for all backend hosts
-            warm_up_dns_cache(&shared_config, &dns_cache).await;
+            if let Err(e) = dns::warm_up_dns_cache(&dns_cache, &shared_config.read().await.proxies).await {
+                warn!("DNS cache warmup for initial proxies failed: {}", e);
+            }
             
             info!("Initial configuration loaded successfully");
         },
@@ -211,14 +193,26 @@ async fn connect_to_control_plane(
                     }
                 };
                 
-                // Update shared configuration
+                // Apply update to shared configuration
                 {
                     let mut config = shared_config.write().await;
+                    let old_proxies_count = config.proxies.len();
+                    
+                    // Update configuration
                     *config = updated_config;
+                    
+                    // Warm up DNS cache with new configuration
+                    drop(config); // Release the write lock
+                    
+                    let config_read = shared_config.read().await;
+                    // Only warm up if there are proxies and we've actually added new ones
+                    if !config_read.proxies.is_empty() && config_read.proxies.len() > old_proxies_count {
+                        if let Err(e) = dns::warm_up_dns_cache(&dns_cache, &config_read.proxies).await {
+                            warn!("DNS cache warmup for new proxies failed: {}", e);
+                        }
+                    }
+                    drop(config_read);
                 }
-                
-                // Update DNS cache for new/changed backend hosts
-                warm_up_dns_cache(&shared_config, &dns_cache).await;
                 
                 info!("Configuration updated successfully");
             },
@@ -231,48 +225,4 @@ async fn connect_to_control_plane(
     
     info!("Configuration update stream ended");
     Ok(())
-}
-
-/// Warm up the DNS cache with all backend hosts in the configuration
-async fn warm_up_dns_cache(config: &Arc<RwLock<Configuration>>, dns_cache: &Arc<DnsCache>) {
-    let config_read = config.read().await;
-    
-    if config_read.proxies.is_empty() {
-        debug!("No proxies in configuration, skipping DNS cache warmup");
-        return;
-    }
-    
-    info!("Warming up DNS cache for {} proxies", config_read.proxies.len());
-    
-    // Collect unique backend hosts
-    let mut hosts = std::collections::HashSet::new();
-    
-    for proxy in &config_read.proxies {
-        if proxy.dns_override.is_none() {
-            hosts.insert(proxy.backend_host.clone());
-        }
-    }
-    
-    // Perform DNS lookups concurrently
-    let mut tasks = Vec::new();
-    
-    for host in hosts {
-        let dns_cache = Arc::clone(dns_cache);
-        let task = tokio::spawn(async move {
-            if let Err(e) = dns_cache.lookup(&host).await {
-                warn!("DNS warmup lookup failed for host {}: {}", host, e);
-            } else {
-                debug!("DNS cache warmed up for host {}", host);
-            }
-        });
-        
-        tasks.push(task);
-    }
-    
-    // Wait for all lookups to complete
-    for task in tasks {
-        let _ = task.await;
-    }
-    
-    info!("DNS cache warmup completed");
 }

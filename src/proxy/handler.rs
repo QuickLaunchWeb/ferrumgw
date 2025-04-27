@@ -11,7 +11,7 @@ use http::uri::Scheme;
 
 use crate::config::data_model::{Configuration, Proxy, BackendProtocol};
 use crate::proxy::router::Router;
-use crate::proxy::dns::DnsCache;
+use crate::dns::DnsCache; // Updated import from the dns module
 use crate::plugins::PluginManager;
 use crate::proxy::websocket::handle_websocket;
 
@@ -281,7 +281,7 @@ impl ProxyHandler {
             .map(Duration::from_secs)
             .unwrap_or_else(|| self.dns_cache.default_ttl());
         
-        self.dns_cache.resolve_with_ttl(&proxy.backend_host, ttl).await
+        self.dns_cache.lookup_with_ttl(&proxy.backend_host, ttl).await // Using lookup_with_ttl instead of resolve_with_ttl
     }
     
     /// Builds the backend URI for the request
@@ -416,13 +416,13 @@ pub struct Consumer {
 #[derive(Debug, Default)]
 pub struct LatencyMetrics {
     /// Total request processing time
-    pub total: Duration,
+    pub total: u64,
     /// Time spent in gateway processing before sending to backend
-    pub gateway_processing: Duration,
+    pub gateway_processing: u64,
     /// Time to first byte from backend
-    pub backend_ttfb: Duration,
+    pub backend_ttfb: u64,
     /// Total time spent interacting with backend
-    pub backend_total: Duration,
+    pub backend_total: u64,
 }
 
 /// A context object for a single request through the gateway

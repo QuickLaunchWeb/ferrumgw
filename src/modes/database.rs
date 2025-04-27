@@ -10,7 +10,7 @@ use crate::config::data_model::Configuration;
 use crate::database::DatabaseClient;
 use crate::proxy::ProxyServer;
 use crate::admin::AdminServer;
-use crate::dns::cache::DnsCache;
+use crate::dns::{self, DnsCache};
 
 pub async fn run(config: EnvConfig) -> Result<()> {
     info!("Starting Ferrum Gateway in Database mode");
@@ -52,8 +52,25 @@ pub async fn run(config: EnvConfig) -> Result<()> {
     // Validate listen_path uniqueness
     validate_listen_path_uniqueness(&shared_config.read().await)?;
     
-    // Warm up DNS cache with initial configuration
-    warm_up_dns_cache(&shared_config, &dns_cache).await;
+    // Load all proxies from config for DNS cache initialization
+    {
+        let config_read = shared_config.read().await;
+        if !config_read.proxies.is_empty() {
+            // Warm up DNS cache
+            if let Err(e) = dns::warm_up_dns_cache(&dns_cache, &config_read.proxies).await {
+                warn!("DNS cache warmup failed: {}", e);
+            }
+            
+            // Start DNS prefetch background task
+            let proxies_copy = Arc::new(RwLock::new(config_read.proxies.clone()));
+            let dns_cache_copy = Arc::clone(&dns_cache);
+            dns::start_dns_prefetch_task(
+                dns_cache_copy,
+                proxies_copy,
+                Duration::from_secs(300) // Check every 5 minutes
+            );
+        }
+    }
     
     // Start DNS refresh loop
     let dns_cache_clone = Arc::clone(&dns_cache);
@@ -162,7 +179,9 @@ pub async fn run(config: EnvConfig) -> Result<()> {
                         }
                         
                         // After updating the configuration, warm up DNS cache for any new hosts
-                        warm_up_dns_cache(&shared_config_clone, &dns_cache_for_polling).await;
+                        if let Err(e) = dns::warm_up_dns_cache(&dns_cache_for_polling, &new_config.proxies).await {
+                            warn!("DNS cache warmup failed: {}", e);
+                        }
                         
                         info!("Configuration updated successfully");
                     }
@@ -201,48 +220,4 @@ fn validate_listen_path_uniqueness(config: &Configuration) -> Result<()> {
     }
     
     Ok(())
-}
-
-/// Warm up the DNS cache with all backend hosts in the configuration
-async fn warm_up_dns_cache(config: &Arc<RwLock<Configuration>>, dns_cache: &Arc<DnsCache>) {
-    let config_read = config.read().await;
-    
-    if config_read.proxies.is_empty() {
-        debug!("No proxies in configuration, skipping DNS cache warmup");
-        return;
-    }
-    
-    info!("Warming up DNS cache for {} proxies", config_read.proxies.len());
-    
-    // Collect unique backend hosts
-    let mut hosts = std::collections::HashSet::new();
-    
-    for proxy in &config_read.proxies {
-        if proxy.dns_override.is_none() {
-            hosts.insert(proxy.backend_host.clone());
-        }
-    }
-    
-    // Perform DNS lookups concurrently
-    let mut tasks = Vec::new();
-    
-    for host in hosts {
-        let dns_cache = Arc::clone(dns_cache);
-        let task = tokio::spawn(async move {
-            if let Err(e) = dns_cache.lookup(&host).await {
-                warn!("DNS warmup lookup failed for host {}: {}", host, e);
-            } else {
-                debug!("DNS cache warmed up for host {}", host);
-            }
-        });
-        
-        tasks.push(task);
-    }
-    
-    // Wait for all lookups to complete
-    for task in tasks {
-        let _ = task.await;
-    }
-    
-    info!("DNS cache warmup completed");
 }
