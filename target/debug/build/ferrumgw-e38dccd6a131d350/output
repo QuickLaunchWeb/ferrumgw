@@ -1,3 +1,0 @@
-cargo:rerun-if-changed=src/grpc/proto/config.proto
-cargo:rerun-if-changed=src/grpc/proto/config.proto
-cargo:rerun-if-changed=src/grpc/proto

@@ -1,2 +1,0 @@
-Handle: hyper::rt::Executor<hyper::proto::h2::server::H2Stream<{async block@src/proxy/mod.rs:180:29: 180:39}, hyper::Body>>
-hyper::server::conn::Connection<tokio::net::TcpStream, hyper::service::util::ServiceFn<{closure@src/proxy/mod.rs:175:36: 175:46}, hyper::Body>, Handle>
