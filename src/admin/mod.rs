@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::net::SocketAddr;
 use std::collections::HashMap;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, broadcast};
 use tokio::net::TcpListener;
 use anyhow::{Result, Context};
 use tracing::{info, warn, error, debug};
@@ -17,6 +17,7 @@ use crate::config::data_model::{Configuration, Proxy, Consumer, PluginConfig};
 use crate::database::DatabaseClient;
 use crate::proxy::tls;
 use crate::modes::OperationMode;
+use crate::proxy::update_manager::RouterUpdate;
 
 mod routes;
 mod auth;
@@ -140,6 +141,7 @@ impl AdminServer {
             db_client,
             jwt_secret,
             operation_mode,
+            update_tx: None,
         });
         
         // Accept and serve connections
@@ -201,6 +203,7 @@ impl AdminServer {
             db_client,
             jwt_secret,
             operation_mode,
+            update_tx: None,
         });
         
         // Accept and serve connections
@@ -257,6 +260,7 @@ pub struct AdminApiState {
     pub db_client: DatabaseClient,
     pub jwt_secret: String,
     pub operation_mode: OperationMode,
+    pub update_tx: Option<broadcast::Sender<RouterUpdate>>,
 }
 
 /// Handle an incoming request to the Admin API

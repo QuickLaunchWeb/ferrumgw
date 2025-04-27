@@ -25,18 +25,21 @@ use crate::config::data_model::{Configuration, Proxy, BackendProtocol};
 use crate::proxy::router::Router;
 use crate::proxy::handler::ProxyHandler;
 use crate::plugins::PluginManager;
+use crate::proxy::update_manager::UpdateManager;
 
 mod router;
 mod handler;
 mod dns;
 mod tls;
 mod websocket;
+mod update_manager;
 
 pub struct ProxyServer {
     env_config: EnvConfig,
     shared_config: Arc<RwLock<Configuration>>,
     plugin_manager: Arc<PluginManager>,
     dns_cache: Arc<dns::DnsCache>,
+    update_manager: Arc<UpdateManager>,
 }
 
 impl ProxyServer {
@@ -48,12 +51,22 @@ impl ProxyServer {
         // Initialize the plugin manager
         let plugin_manager = Arc::new(PluginManager::new());
         
+        // Initialize the router and update manager
+        let router = Arc::new(Router::new(Arc::clone(&shared_config)));
+        let update_manager = Arc::new(UpdateManager::new(Arc::clone(&router)));
+        
         Ok(Self {
             env_config,
             shared_config,
             plugin_manager,
             dns_cache,
+            update_manager,
         })
+    }
+    
+    /// Get a reference to the update manager
+    pub fn get_update_manager(&self) -> Arc<UpdateManager> {
+        Arc::clone(&self.update_manager)
     }
     
     pub async fn start(self) -> Result<()> {

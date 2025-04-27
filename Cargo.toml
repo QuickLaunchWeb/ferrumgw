@@ -66,6 +66,7 @@ dashmap = "5.4"  # Concurrent HashMap for caching
 once_cell = "1.17" # For static initialization
 clap = { version = "4.3", features = ["derive", "env"] }
 rand = "0.8"
+matchit = "0.7" # High-performance path router with radix tree implementation
 
 # For health metrics
 prometheus = "0.13"

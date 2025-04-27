@@ -1,0 +1,139 @@
+---
+# Ferrum Gateway Sample Configuration
+# This configuration demonstrates all supported resource types
+
+# Proxy configurations (routes)
+proxies:
+  - id: "api-proxy-1"
+    listen_path: "/api/v1/"
+    backend_host: "api-backend-1.example.com"
+    backend_protocol: "https"
+    backend_path: "/v1"
+    strip_listen_path: true
+    preserve_host_header: false
+
+  - id: "api-proxy-2"
+    listen_path: "/api/v2/"
+    backend_host: "api-backend-2.example.com"
+    backend_protocol: "http"
+    strip_listen_path: true
+    dns_override: "127.0.0.1:8081"
+
+  - id: "websocket-proxy"
+    listen_path: "/ws/"
+    backend_host: "websocket-backend.example.com"
+    backend_protocol: "wss"
+    strip_listen_path: true
+
+  - id: "auth-service"
+    listen_path: "/auth/"
+    backend_host: "auth.internal"
+    backend_protocol: "https"
+    strip_listen_path: false
+    dns_override: "127.0.0.1:8082"
+
+  - id: "public-api"
+    listen_path: "/public/"
+    backend_host: "public-api.example.com"
+    backend_protocol: "https"
+    backend_path: "/external"
+    strip_listen_path: true
+
+# Consumer configurations (API clients)
+consumers:
+  - id: "mobile-app"
+    username: "mobile-application"
+    custom_id: "com.example.mobileapp"
+    metadata:
+      app_version: "2.0.0"
+      platform: "iOS"
+    credentials:
+      - type: "api_key"
+        id: "mobile-app-key"
+        key: "mobileapp123456"
+      - type: "jwt"
+        id: "mobile-app-jwt"
+        algorithm: "HS256"
+        secret: "mobilejwtsecret"
+
+  - id: "web-app"
+    username: "web-application"
+    custom_id: "web.example.com"
+    metadata:
+      app_version: "1.5.0"
+      platform: "Web"
+    credentials:
+      - type: "api_key"
+        id: "web-app-key"
+        key: "webapp123456"
+
+  - id: "partner-service"
+    username: "partner-integration"
+    custom_id: "partner-company-123"
+    metadata:
+      company: "Partner Inc."
+    credentials:
+      - type: "oauth2"
+        id: "partner-oauth"
+        client_id: "partner-client"
+        client_secret: "partnersecret123"
+
+  - id: "internal-service"
+    username: "internal-microservice"
+    custom_id: "internal-system-456"
+    credentials:
+      - type: "api_key"
+        id: "internal-key"
+        key: "internalservice789"
+
+  - id: "admin-user"
+    username: "admin"
+    credentials:
+      - type: "basic_auth"
+        id: "admin-basic"
+        username: "admin"
+        password: "$2a$10$qiLQVRlftLnXCM9AvYvJ5.4K2tGhQsoCf8QmFQzTGmHaHQ9cFjBIe" # "admin123"
+
+# Plugin configurations
+plugins:
+  - id: "rate-limit-public"
+    type: "rate_limiting"
+    config:
+      requests_per_minute: 60
+      burst_size: 10
+      key_by: "ip"
+    proxy_ids: ["public-api"]
+
+  - id: "api-key-auth"
+    type: "api_key_auth"
+    config:
+      header_name: "X-API-Key"
+      query_param: "api_key"
+    proxy_ids: ["api-proxy-1", "api-proxy-2"]
+
+  - id: "jwt-auth"
+    type: "jwt_auth"
+    config:
+      secret: "secure_jwt_secret_for_testing"
+      header_name: "Authorization"
+      auth_scheme: "Bearer"
+      cookie_name: "jwt_token"
+    proxy_ids: ["auth-service"]
+
+  - id: "oauth2-auth"
+    type: "oauth2_auth"
+    config:
+      jwks_url: "https://auth-server.example.com/.well-known/jwks.json"
+      issuer: "https://auth-server.example.com"
+      audiences: ["https://api.example.com"]
+    proxy_ids: ["api-proxy-1"]
+
+  - id: "request-transformation"
+    type: "request_transformer"
+    config:
+      add_headers:
+        X-Forwarded-By: "FerrumGW"
+        X-Request-ID: "{{request.id}}"
+      remove_headers:
+        - "User-Agent"
+    proxy_ids: ["api-proxy-1", "api-proxy-2", "public-api"]

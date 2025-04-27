@@ -1,59 +1,122 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use hyper::{Request, Body};
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn, info};
+use matchit::{Router as MatchitRouter, Match};
 
 use crate::config::data_model::{Configuration, Proxy};
 
 /// The Router is responsible for matching incoming requests to the appropriate proxy
-/// configuration using a longest prefix match algorithm.
+/// configuration using a radix tree for efficient path matching.
 pub struct Router {
     shared_config: Arc<RwLock<Configuration>>,
+    route_tree: Arc<RwLock<MatchitRouter<String>>>, // Stores proxy IDs in the tree
 }
 
 impl Router {
     pub fn new(shared_config: Arc<RwLock<Configuration>>) -> Self {
-        Self { shared_config }
+        let router = Self { 
+            shared_config,
+            route_tree: Arc::new(RwLock::new(MatchitRouter::new())),
+        };
+        
+        // Initialize the routing tree asynchronously
+        let router_clone = router.clone();
+        tokio::spawn(async move {
+            if let Err(e) = router_clone.rebuild_route_tree().await {
+                warn!("Failed to initialize routing tree: {}", e);
+            }
+        });
+        
+        router
+    }
+    
+    /// Clone the router
+    pub fn clone(&self) -> Self {
+        Self {
+            shared_config: Arc::clone(&self.shared_config),
+            route_tree: Arc::clone(&self.route_tree),
+        }
     }
     
     /// Routes a request to the appropriate proxy configuration using
-    /// longest prefix matching on the request path.
+    /// the radix tree for efficient path matching.
     pub async fn route(&self, req: &Request<Body>) -> Option<Proxy> {
         let path = req.uri().path();
+        trace!("Routing request for path: {}", path);
         
-        // Get all proxy configurations
+        // Use the radix tree to find the best match
+        let route_tree = self.route_tree.read().await;
+        
+        match route_tree.at(path) {
+            Ok(route_match) => {
+                let proxy_id = route_match.value;
+                debug!("Matched path '{}' to proxy ID '{}'", path, proxy_id);
+                
+                // Retrieve the full proxy configuration
+                let config = self.shared_config.read().await;
+                let proxy = config.proxies.iter()
+                    .find(|p| p.id == *proxy_id)
+                    .cloned();
+                
+                if let Some(ref p) = proxy {
+                    debug!("Using proxy '{}' for path '{}'", 
+                          p.name.as_deref().unwrap_or("unnamed"), path);
+                } else {
+                    warn!("Found proxy ID '{}' in route tree but not in configuration", proxy_id);
+                }
+                
+                proxy
+            },
+            Err(_) => {
+                debug!("No matching proxy found for path '{}'", path);
+                None
+            }
+        }
+    }
+    
+    /// Rebuilds the routing tree when configuration changes.
+    /// This ensures the router always has the latest routes.
+    pub async fn rebuild_route_tree(&self) -> anyhow::Result<()> {
+        // Get the latest configuration
         let config = self.shared_config.read().await;
         
-        // Find the proxy with the longest matching listen_path
-        let mut matched_proxy: Option<Proxy> = None;
-        let mut longest_match_len = 0;
+        // Create a new routing tree
+        let mut new_tree = MatchitRouter::new();
+        let mut route_count = 0;
         
+        // Add all proxies to the tree
         for proxy in &config.proxies {
-            let listen_path = &proxy.listen_path;
+            let mut path = proxy.listen_path.clone();
             
-            // Check if path starts with listen_path
-            if path.starts_with(listen_path) {
-                // Check if this is a longer match than the current best
-                let listen_path_len = listen_path.len();
-                if listen_path_len > longest_match_len {
-                    // This is a better match (longer prefix)
-                    longest_match_len = listen_path_len;
-                    matched_proxy = Some(proxy.clone());
-                    
-                    trace!("Found better match for path '{}': listen_path='{}', proxy='{}'", 
-                          path, listen_path, proxy.name.as_deref().unwrap_or("unnamed"));
+            // Ensure path ends with * to capture all subpaths
+            if !path.ends_with('*') {
+                if path.ends_with('/') {
+                    path.push('*');
+                } else {
+                    path.push_str("/*");
+                }
+            }
+            
+            match new_tree.insert(path, proxy.id.clone()) {
+                Ok(_) => {
+                    route_count += 1;
+                    trace!("Added route to tree: {} -> {}", proxy.listen_path, proxy.id);
+                },
+                Err(e) => {
+                    warn!("Failed to add route for proxy {}: {}", proxy.id, e);
                 }
             }
         }
         
-        if let Some(ref proxy) = matched_proxy {
-            debug!("Matched request path '{}' to proxy '{}'", 
-                  path, proxy.name.as_deref().unwrap_or("unnamed"));
-        } else {
-            debug!("No matching proxy found for path '{}'", path);
+        // Replace the old tree with the new one
+        {
+            let mut tree = self.route_tree.write().await;
+            *tree = new_tree;
         }
         
-        matched_proxy
+        info!("Rebuilt routing tree with {} routes", route_count);
+        Ok(())
     }
     
     /// Constructs the backend path for a request based on the matched proxy configuration

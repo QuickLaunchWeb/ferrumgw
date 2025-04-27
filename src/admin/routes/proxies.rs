@@ -6,6 +6,7 @@ use tracing::{debug, error, info};
 use crate::admin::AdminApiState;
 use crate::config::data_model::Proxy;
 use crate::modes::OperationMode;
+use crate::proxy::update_manager::RouterUpdate;
 
 /// Handler for GET /proxies endpoint - lists all proxies
 pub async fn list_proxies(req: Request<Body>, state: Arc<AdminApiState>) -> Result<Response<Body>> {
@@ -103,6 +104,13 @@ pub async fn create_proxy(req: Request<Body>, state: Arc<AdminApiState>) -> Resu
             .header("Content-Type", "application/json")
             .body(Body::from(r#"{"error":"Database is unavailable"}"#))
             .unwrap())
+    }
+    
+    // Notify the update manager about the configuration change
+    if let Some(update_tx) = &state.update_tx {
+        if let Err(e) = update_tx.send(RouterUpdate::ConfigChanged) {
+            debug!("Failed to notify router update: {}", e);
+        }
     }
 }
 
@@ -238,6 +246,13 @@ pub async fn update_proxy(proxy_id: &str, req: Request<Body>, state: Arc<AdminAp
             .body(Body::from(r#"{"error":"Database is unavailable"}"#))
             .unwrap())
     }
+    
+    // Notify the update manager about the configuration change
+    if let Some(update_tx) = &state.update_tx {
+        if let Err(e) = update_tx.send(RouterUpdate::ConfigChanged) {
+            debug!("Failed to notify router update: {}", e);
+        }
+    }
 }
 
 /// Handler for DELETE /proxies/{id} endpoint - deletes a specific proxy
@@ -291,5 +306,12 @@ pub async fn delete_proxy(proxy_id: &str, state: Arc<AdminApiState>) -> Result<R
             .header("Content-Type", "application/json")
             .body(Body::from(r#"{"error":"Database is unavailable"}"#))
             .unwrap())
+    }
+    
+    // Notify the update manager about the configuration change
+    if let Some(update_tx) = &state.update_tx {
+        if let Err(e) = update_tx.send(RouterUpdate::ConfigChanged) {
+            debug!("Failed to notify router update: {}", e);
+        }
     }
 }
