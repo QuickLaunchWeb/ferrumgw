@@ -104,7 +104,9 @@ All operational parameters MUST be configurable via environment variables.
 *   **Database (Database & CP Modes):**
     *   `FERRUM_DB_TYPE`: (`postgres`, `mysql`, `sqlite`) - **Required**.
     *   `FERRUM_DB_URL`: (Connection string) - **Required**.
-    *   `FERRUM_DB_POLL_INTERVAL_SECONDS`: (Integer seconds) - Default: `15`.
+    *   `FERRUM_DB_POLL_INTERVAL`: (Integer seconds) - Default: `30`.
+    *   `FERRUM_DB_POLL_CHECK_INTERVAL`: (Integer seconds) - Default: `5`.
+    *   `FERRUM_DB_INCREMENTAL_POLLING`: (Boolean) - Default: `true`.
 *   **File Mode:**
     *   `FERRUM_FILE_CONFIG_PATH`: (Path to YAML/JSON file/directory) - **Required**.
 *   **CP/DP Communication:**
@@ -121,7 +123,7 @@ All operational parameters MUST be configurable via environment variables.
 
 This defines how the gateway processes requests on the Proxy Traffic listeners.
 
-*   **Protocol Handling:** MUST accept incoming HTTP/1.1 and HTTP/2 requests. MUST be capable of proxying requests to backend services using `http`, `https`, `ws` (WebSocket), `wss` (Secure WebSocket), and `grpc` (over HTTP/2), as specified in the matched `Proxy` resource's `backend_protocol`.
+*   **Protocol Handling:** MUST accept incoming HTTP/1.1 and HTTP/2 and HTTP/3 requests. MUST be capable of proxying requests to backend services using `http`, `https`, `ws` (WebSocket), `wss` (Secure WebSocket), and `grpc` (over HTTP/2), as specified in the matched `Proxy` resource's `backend_protocol`.
 *   **Routing Implementation:**
     *   MUST use **longest prefix matching** to select the appropriate `Proxy` resource. The matching is performed on the incoming request's URI path against the `Proxy.listen_path` values of all active Proxy resources.
     *   Given the requirement for unique `Proxy.listen_path` values, there will be at most one longest match.

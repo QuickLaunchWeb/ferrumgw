@@ -128,7 +128,9 @@ export FERRUM_DP_GRPC_AUTH_TOKEN=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 | `FERRUM_DP_GRPC_AUTH_TOKEN` | JWT token for DP authentication to CP | - | In DP mode |
 | `FERRUM_DB_TYPE` | Database type (`postgres`, `mysql`, `sqlite`) | - | In Database & CP modes |
 | `FERRUM_DB_URL` | Database connection URL | - | In Database & CP modes |
-| `FERRUM_DB_POLL_INTERVAL_SECONDS` | Interval for polling DB changes | `15` | No |
+| `FERRUM_DB_POLL_INTERVAL` | Interval for polling DB changes | `30` | No |
+| `FERRUM_DB_POLL_CHECK_INTERVAL` | Interval for lightweight change detection | `5` | No |
+| `FERRUM_DB_INCREMENTAL_POLLING` | Enable/disable incremental polling | `true` | No |
 | `FERRUM_FILE_CONFIG_PATH` | Path to config file or directory | - | In File mode |
 | `FERRUM_CP_GRPC_LISTEN_ADDR` | Address for CP gRPC server | - | In CP mode |
 | `FERRUM_DP_CP_GRPC_URL` | URL of CP gRPC server | - | In DP mode |
