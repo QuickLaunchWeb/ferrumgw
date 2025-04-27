@@ -126,6 +126,60 @@ impl DatabaseClient {
         }
     }
     
+    /// Get a consumer by its ID from the database
+    pub async fn get_consumer_by_id(&self, consumer_id: &str) -> Result<Consumer> {
+        match self.db_type {
+            DatabaseType::Postgres => {
+                if let DbPool::Postgres(ref pool) = *self.pool {
+                    postgres::get_consumer_by_id(pool, consumer_id).await
+                } else {
+                    unreachable!("Pool type mismatch with database type")
+                }
+            },
+            DatabaseType::MySQL => {
+                if let DbPool::MySQL(ref pool) = *self.pool {
+                    mysql::get_consumer_by_id(pool, consumer_id).await
+                } else {
+                    unreachable!("Pool type mismatch with database type")
+                }
+            },
+            DatabaseType::SQLite => {
+                if let DbPool::SQLite(ref pool) = *self.pool {
+                    sqlite::get_consumer_by_id(pool, consumer_id).await
+                } else {
+                    unreachable!("Pool type mismatch with database type")
+                }
+            },
+        }
+    }
+    
+    /// Delete a consumer from the database
+    pub async fn delete_consumer(&self, consumer_id: &str) -> Result<()> {
+        match self.db_type {
+            DatabaseType::Postgres => {
+                if let DbPool::Postgres(ref pool) = *self.pool {
+                    postgres::delete_consumer(pool, consumer_id).await
+                } else {
+                    unreachable!("Pool type mismatch with database type")
+                }
+            },
+            DatabaseType::MySQL => {
+                if let DbPool::MySQL(ref pool) = *self.pool {
+                    mysql::delete_consumer(pool, consumer_id).await
+                } else {
+                    unreachable!("Pool type mismatch with database type")
+                }
+            },
+            DatabaseType::SQLite => {
+                if let DbPool::SQLite(ref pool) = *self.pool {
+                    sqlite::delete_consumer(pool, consumer_id).await
+                } else {
+                    unreachable!("Pool type mismatch with database type")
+                }
+            },
+        }
+    }
+    
     // Similar methods would be implemented for other CRUD operations
     // and other entity types (Consumer, PluginConfig)
 }

@@ -5,14 +5,24 @@ use tracing::{debug, error, info};
 
 use crate::admin::AdminApiState;
 use crate::config::data_model::Proxy;
+use crate::modes::OperationMode;
 
 /// Handler for GET /proxies endpoint - lists all proxies
-pub async fn list_proxies(state: Arc<AdminApiState>) -> Result<Response<Body>> {
+pub async fn list_proxies(req: Request<Body>, state: Arc<AdminApiState>) -> Result<Response<Body>> {
+    // Extract pagination parameters
+    let pagination = PaginationQuery::from_request(&req);
+    
     // Get the current configuration
     let config = state.shared_config.read().await;
     
-    // Serialize the proxies to JSON
-    let json = serde_json::to_string(&config.proxies)?;
+    // Apply pagination to the proxies
+    let (paginated_proxies, pagination_meta) = pagination.paginate(&config.proxies);
+    
+    // Create the paginated response
+    let response = create_paginated_response(paginated_proxies, pagination_meta);
+    
+    // Serialize to JSON
+    let json = serde_json::to_string(&response)?;
     
     // Return the response
     Ok(Response::builder()
@@ -24,6 +34,15 @@ pub async fn list_proxies(state: Arc<AdminApiState>) -> Result<Response<Body>> {
 
 /// Handler for POST /proxies endpoint - creates a new proxy
 pub async fn create_proxy(req: Request<Body>, state: Arc<AdminApiState>) -> Result<Response<Body>> {
+    // Check operation mode
+    if state.operation_mode == OperationMode::File {
+        return Ok(Response::builder()
+            .status(StatusCode::CONFLICT)
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"error":"Cannot modify config — currently running in File Mode"}"#))
+            .unwrap());
+    }
+    
     // Read the request body
     let body_bytes = hyper::body::to_bytes(req.into_body()).await?;
     
@@ -54,24 +73,37 @@ pub async fn create_proxy(req: Request<Body>, state: Arc<AdminApiState>) -> Resu
     proxy.updated_at = now;
     
     // Create the proxy in the database
-    let created_proxy = state.db_client.create_proxy(proxy).await?;
-    
-    // Update the in-memory configuration
-    {
-        let mut config = state.shared_config.write().await;
-        config.proxies.push(created_proxy.clone());
-        config.last_updated_at = now;
+    if let Some(db) = &state.db_client {
+        match db.create_proxy(&proxy).await {
+            Ok(created_proxy) => {
+                // Serialize the created proxy to JSON
+                let json = serde_json::to_string(&created_proxy)?;
+                
+                // Return the response
+                Ok(Response::builder()
+                    .status(StatusCode::CREATED)
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(json))
+                    .unwrap())
+            },
+            Err(e) => {
+                error!("Failed to create proxy in database: {}", e);
+                
+                Ok(Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(format!(r#"{{"error":"Failed to create proxy: {}"}}"#, e)))
+                    .unwrap())
+            }
+        }
+    } else {
+        // No database client available
+        Ok(Response::builder()
+            .status(StatusCode::SERVICE_UNAVAILABLE)
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"error":"Database is unavailable"}"#))
+            .unwrap())
     }
-    
-    // Serialize the created proxy to JSON
-    let json = serde_json::to_string(&created_proxy)?;
-    
-    // Return the response
-    Ok(Response::builder()
-        .status(StatusCode::CREATED)
-        .header("Content-Type", "application/json")
-        .body(Body::from(json))
-        .unwrap())
 }
 
 /// Handler for GET /proxies/{id} endpoint - gets a specific proxy
@@ -79,14 +111,36 @@ pub async fn get_proxy(proxy_id: &str, state: Arc<AdminApiState>) -> Result<Resp
     // Get the current configuration
     let config = state.shared_config.read().await;
     
-    // Find the proxy with the specified ID
-    let proxy = config.proxies
-        .iter()
-        .find(|p| p.id == proxy_id)
-        .ok_or_else(|| anyhow::anyhow!("Proxy not found"))?;
+    // First check in-memory configuration
+    let proxy = config.proxies.iter().find(|p| p.id == proxy_id).cloned();
+    
+    // If not found in memory and database is available, check the database
+    let proxy = if proxy.is_none() && state.db_client.is_some() {
+        let db = state.db_client.as_ref().unwrap();
+        match db.get_proxy_by_id(proxy_id).await {
+            Ok(db_proxy) => Some(db_proxy),
+            Err(e) => {
+                debug!("Error retrieving proxy from database: {}", e);
+                None
+            }
+        }
+    } else {
+        proxy
+    };
+    
+    // Return 404 if not found
+    if proxy.is_none() {
+        return Ok(Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"error":"Proxy not found"}"#))
+            .unwrap());
+    }
+    
+    let proxy = proxy.unwrap();
     
     // Serialize the proxy to JSON
-    let json = serde_json::to_string(proxy)?;
+    let json = serde_json::to_string(&proxy)?;
     
     // Return the response
     Ok(Response::builder()
@@ -98,6 +152,15 @@ pub async fn get_proxy(proxy_id: &str, state: Arc<AdminApiState>) -> Result<Resp
 
 /// Handler for PUT /proxies/{id} endpoint - updates a specific proxy
 pub async fn update_proxy(proxy_id: &str, req: Request<Body>, state: Arc<AdminApiState>) -> Result<Response<Body>> {
+    // Check operation mode
+    if state.operation_mode == OperationMode::File {
+        return Ok(Response::builder()
+            .status(StatusCode::CONFLICT)
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"error":"Cannot modify config — currently running in File Mode"}"#))
+            .unwrap());
+    }
+    
     // Read the request body
     let body_bytes = hyper::body::to_bytes(req.into_body()).await?;
     
@@ -129,85 +192,104 @@ pub async fn update_proxy(proxy_id: &str, req: Request<Body>, state: Arc<AdminAp
                     .unwrap());
             }
         }
+        
+        // Check if the proxy exists
+        if !config.proxies.iter().any(|p| p.id == proxy_id) {
+            return Ok(Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .header("Content-Type", "application/json")
+                .body(Body::from(r#"{"error":"Proxy not found"}"#))
+                .unwrap());
+        }
     }
     
     // Update timestamp
     updated_proxy.updated_at = chrono::Utc::now();
     
     // Update the proxy in the database
-    match &state.db_client {
-        Some(db) => {
-            // Use the database client to update the proxy
-            db.update_proxy(&updated_proxy).await?;
-        },
-        None => {
-            // If no database client is available, update the in-memory configuration only
-            debug!("No database client available, updating proxy in-memory only");
+    if let Some(db) = &state.db_client {
+        match db.update_proxy(&updated_proxy).await {
+            Ok(_) => {
+                // Serialize the updated proxy to JSON
+                let json = serde_json::to_string(&updated_proxy)?;
+                
+                // Return the response
+                Ok(Response::builder()
+                    .status(StatusCode::OK)
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(json))
+                    .unwrap())
+            },
+            Err(e) => {
+                error!("Failed to update proxy in database: {}", e);
+                
+                Ok(Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(format!(r#"{{"error":"Failed to update proxy: {}"}}"#, e)))
+                    .unwrap())
+            }
         }
+    } else {
+        // No database client available
+        Ok(Response::builder()
+            .status(StatusCode::SERVICE_UNAVAILABLE)
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"error":"Database is unavailable"}"#))
+            .unwrap())
     }
-    
-    // Update the in-memory configuration
-    {
-        let mut config = state.shared_config.write().await;
-        
-        // Find the index of the proxy with the specified ID
-        let index = config.proxies
-            .iter()
-            .position(|p| p.id == proxy_id)
-            .ok_or_else(|| anyhow::anyhow!("Proxy not found"))?;
-        
-        // Replace the proxy
-        config.proxies[index] = updated_proxy.clone();
-        
-        // Update the last updated timestamp
-        config.last_updated_at = updated_proxy.updated_at;
-    }
-    
-    // Serialize the updated proxy to JSON
-    let json = serde_json::to_string(&updated_proxy)?;
-    
-    // Return the response
-    Ok(Response::builder()
-        .status(StatusCode::OK)
-        .header("Content-Type", "application/json")
-        .body(Body::from(json))
-        .unwrap())
 }
 
 /// Handler for DELETE /proxies/{id} endpoint - deletes a specific proxy
 pub async fn delete_proxy(proxy_id: &str, state: Arc<AdminApiState>) -> Result<Response<Body>> {
-    // Delete the proxy from the database
-    match &state.db_client {
-        Some(db) => {
-            // Use the database client to delete the proxy
-            db.delete_proxy(proxy_id).await?;
-        },
-        None => {
-            // If no database client is available, update the in-memory configuration only
-            debug!("No database client available, deleting proxy in-memory only");
+    // Check operation mode
+    if state.operation_mode == OperationMode::File {
+        return Ok(Response::builder()
+            .status(StatusCode::CONFLICT)
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"error":"Cannot modify config — currently running in File Mode"}"#))
+            .unwrap());
+    }
+    
+    // Check if the proxy exists
+    {
+        let config = state.shared_config.read().await;
+        
+        if !config.proxies.iter().any(|p| p.id == proxy_id) {
+            return Ok(Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .header("Content-Type", "application/json")
+                .body(Body::from(r#"{"error":"Proxy not found"}"#))
+                .unwrap());
         }
     }
     
-    // Update the in-memory configuration
-    {
-        let mut config = state.shared_config.write().await;
-        
-        // Find the index of the proxy with the specified ID
-        let index = config.proxies
-            .iter()
-            .position(|p| p.id == proxy_id)
-            .ok_or_else(|| anyhow::anyhow!("Proxy not found"))?;
-        
-        // Remove the proxy
-        config.proxies.remove(index);
-        
-        // Update the last updated timestamp
-        config.last_updated_at = chrono::Utc::now();
+    // Delete the proxy from the database
+    if let Some(db) = &state.db_client {
+        match db.delete_proxy(proxy_id).await {
+            Ok(_) => {
+                // Return the response
+                Ok(Response::builder()
+                    .status(StatusCode::NO_CONTENT)
+                    .body(Body::empty())
+                    .unwrap())
+            },
+            Err(e) => {
+                error!("Failed to delete proxy from database: {}", e);
+                
+                Ok(Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(format!(r#"{{"error":"Failed to delete proxy: {}"}}"#, e)))
+                    .unwrap())
+            }
+        }
+    } else {
+        // No database client available
+        Ok(Response::builder()
+            .status(StatusCode::SERVICE_UNAVAILABLE)
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"error":"Database is unavailable"}"#))
+            .unwrap())
     }
-    
-    // Return the response
-    Ok(Response::builder()
-        .status(StatusCode::NO_CONTENT)
-        .body(Body::empty())
-        .unwrap())
 }

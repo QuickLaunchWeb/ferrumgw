@@ -6,17 +6,28 @@ use tracing::{debug, error, info};
 use crate::admin::AdminApiState;
 use crate::config::data_model::PluginConfig;
 use crate::plugins::PluginManager;
+use crate::modes::OperationMode;
+use crate::admin::pagination::{PaginationQuery, create_paginated_response};
 
 /// Handler for GET /plugins endpoint - lists all available plugin types
-pub async fn list_plugin_types(state: Arc<AdminApiState>) -> Result<Response<Body>> {
+pub async fn list_plugin_types(req: Request<Body>, state: Arc<AdminApiState>) -> Result<Response<Body>> {
+    // Extract pagination parameters
+    let pagination = PaginationQuery::from_request(&req);
+    
     // Create a plugin manager to get the list of available plugins
     let plugin_manager = PluginManager::new();
     
     // Get the list of available plugins
     let plugins = plugin_manager.available_plugins();
     
-    // Serialize the list to JSON
-    let json = serde_json::to_string(&plugins)?;
+    // Apply pagination to the plugins
+    let (paginated_plugins, pagination_meta) = pagination.paginate(&plugins);
+    
+    // Create the paginated response
+    let response = create_paginated_response(paginated_plugins, pagination_meta);
+    
+    // Serialize to JSON
+    let json = serde_json::to_string(&response)?;
     
     // Return the response
     Ok(Response::builder()
@@ -27,12 +38,21 @@ pub async fn list_plugin_types(state: Arc<AdminApiState>) -> Result<Response<Bod
 }
 
 /// Handler for GET /plugins/config endpoint - lists all plugin configurations
-pub async fn list_plugin_configs(state: Arc<AdminApiState>) -> Result<Response<Body>> {
+pub async fn list_plugin_configs(req: Request<Body>, state: Arc<AdminApiState>) -> Result<Response<Body>> {
+    // Extract pagination parameters
+    let pagination = PaginationQuery::from_request(&req);
+    
     // Get the current configuration
     let config = state.shared_config.read().await;
     
-    // Serialize the plugin configs to JSON
-    let json = serde_json::to_string(&config.plugin_configs)?;
+    // Apply pagination to the plugin configs
+    let (paginated_configs, pagination_meta) = pagination.paginate(&config.plugin_configs);
+    
+    // Create the paginated response
+    let response = create_paginated_response(paginated_configs, pagination_meta);
+    
+    // Serialize to JSON
+    let json = serde_json::to_string(&response)?;
     
     // Return the response
     Ok(Response::builder()
@@ -44,6 +64,15 @@ pub async fn list_plugin_configs(state: Arc<AdminApiState>) -> Result<Response<B
 
 /// Handler for POST /plugins/config endpoint - creates a new plugin configuration
 pub async fn create_plugin_config(req: Request<Body>, state: Arc<AdminApiState>) -> Result<Response<Body>> {
+    // Check operation mode
+    if state.operation_mode == OperationMode::File {
+        return Ok(Response::builder()
+            .status(StatusCode::CONFLICT)
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"error":"Cannot modify config — currently running in File Mode"}"#))
+            .unwrap());
+    }
+    
     // Read the request body
     let body_bytes = hyper::body::to_bytes(req.into_body()).await?;
     
@@ -73,31 +102,39 @@ pub async fn create_plugin_config(req: Request<Body>, state: Arc<AdminApiState>)
     
     // Create the plugin config in the database
     if let Some(db) = &state.db_client {
-        // Use the database client to create the plugin config
-        let result = db.create_plugin_config(&plugin_config).await?;
-        // Update the plugin config ID with the one from the database
-        plugin_config.id = result;
+        match db.create_plugin_config(&plugin_config).await {
+            Ok(id) => {
+                // Update the plugin config ID with the one from the database
+                plugin_config.id = id;
+                
+                // Serialize the created plugin config to JSON
+                let json = serde_json::to_string(&plugin_config)?;
+                
+                // Return the response
+                Ok(Response::builder()
+                    .status(StatusCode::CREATED)
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(json))
+                    .unwrap())
+            },
+            Err(e) => {
+                error!("Failed to create plugin config in database: {}", e);
+                
+                Ok(Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(format!(r#"{{"error":"Failed to create plugin config: {}"}}"#, e)))
+                    .unwrap())
+            }
+        }
     } else {
-        // If no database client is available, update the in-memory configuration only
-        debug!("No database client available, creating plugin config in-memory only");
+        // No database client available
+        Ok(Response::builder()
+            .status(StatusCode::SERVICE_UNAVAILABLE)
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"error":"Database is unavailable"}"#))
+            .unwrap())
     }
-    
-    // Update the in-memory configuration
-    {
-        let mut config = state.shared_config.write().await;
-        config.plugin_configs.push(plugin_config.clone());
-        config.last_updated_at = now;
-    }
-    
-    // Serialize the created plugin config to JSON
-    let json = serde_json::to_string(&plugin_config)?;
-    
-    // Return the response
-    Ok(Response::builder()
-        .status(StatusCode::CREATED)
-        .header("Content-Type", "application/json")
-        .body(Body::from(json))
-        .unwrap())
 }
 
 /// Handler for GET /plugins/config/{id} endpoint - gets a specific plugin configuration
@@ -124,6 +161,15 @@ pub async fn get_plugin_config(config_id: &str, state: Arc<AdminApiState>) -> Re
 
 /// Handler for PUT /plugins/config/{id} endpoint - updates a specific plugin configuration
 pub async fn update_plugin_config(config_id: &str, req: Request<Body>, state: Arc<AdminApiState>) -> Result<Response<Body>> {
+    // Check operation mode
+    if state.operation_mode == OperationMode::File {
+        return Ok(Response::builder()
+            .status(StatusCode::CONFLICT)
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"error":"Cannot modify config — currently running in File Mode"}"#))
+            .unwrap());
+    }
+    
     // Read the request body
     let body_bytes = hyper::body::to_bytes(req.into_body()).await?;
     
@@ -155,77 +201,106 @@ pub async fn update_plugin_config(config_id: &str, req: Request<Body>, state: Ar
             .unwrap());
     }
     
+    // Check if plugin config exists
+    {
+        let config = state.shared_config.read().await;
+        
+        if !config.plugin_configs.iter().any(|pc| pc.id == config_id) {
+            return Ok(Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .header("Content-Type", "application/json")
+                .body(Body::from(r#"{"error":"Plugin config not found"}"#))
+                .unwrap());
+        }
+    }
+    
     // Update timestamp
     updated_config.updated_at = chrono::Utc::now();
     
     // Update the plugin config in the database
     if let Some(db) = &state.db_client {
-        // Use the database client to update the plugin config
-        db.update_plugin_config(&updated_config).await?;
+        match db.update_plugin_config(&updated_config).await {
+            Ok(_) => {
+                // Serialize the updated plugin config to JSON
+                let json = serde_json::to_string(&updated_config)?;
+                
+                // Return the response
+                Ok(Response::builder()
+                    .status(StatusCode::OK)
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(json))
+                    .unwrap())
+            },
+            Err(e) => {
+                error!("Failed to update plugin config in database: {}", e);
+                
+                Ok(Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(format!(r#"{{"error":"Failed to update plugin config: {}"}}"#, e)))
+                    .unwrap())
+            }
+        }
     } else {
-        // If no database client is available, update the in-memory configuration only
-        debug!("No database client available, updating plugin config in-memory only");
+        // No database client available
+        Ok(Response::builder()
+            .status(StatusCode::SERVICE_UNAVAILABLE)
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"error":"Database is unavailable"}"#))
+            .unwrap())
     }
-    
-    // Update the in-memory configuration
-    {
-        let mut config = state.shared_config.write().await;
-        
-        // Find the index of the plugin config with the specified ID
-        let index = config.plugin_configs
-            .iter()
-            .position(|pc| pc.id == config_id)
-            .ok_or_else(|| anyhow::anyhow!("Plugin config not found"))?;
-        
-        // Replace the plugin config
-        config.plugin_configs[index] = updated_config.clone();
-        
-        // Update the last updated timestamp
-        config.last_updated_at = updated_config.updated_at;
-    }
-    
-    // Serialize the updated plugin config to JSON
-    let json = serde_json::to_string(&updated_config)?;
-    
-    // Return the response
-    Ok(Response::builder()
-        .status(StatusCode::OK)
-        .header("Content-Type", "application/json")
-        .body(Body::from(json))
-        .unwrap())
 }
 
 /// Handler for DELETE /plugins/config/{id} endpoint - deletes a specific plugin configuration
 pub async fn delete_plugin_config(config_id: &str, state: Arc<AdminApiState>) -> Result<Response<Body>> {
+    // Check operation mode
+    if state.operation_mode == OperationMode::File {
+        return Ok(Response::builder()
+            .status(StatusCode::CONFLICT)
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"error":"Cannot modify config — currently running in File Mode"}"#))
+            .unwrap());
+    }
+    
+    // Check if the plugin config exists
+    {
+        let config = state.shared_config.read().await;
+        
+        if !config.plugin_configs.iter().any(|pc| pc.id == config_id) {
+            return Ok(Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .header("Content-Type", "application/json")
+                .body(Body::from(r#"{"error":"Plugin config not found"}"#))
+                .unwrap());
+        }
+    }
+    
     // Delete the plugin config from the database
     if let Some(db) = &state.db_client {
-        // Use the database client to delete the plugin config
-        db.delete_plugin_config(config_id).await?;
+        match db.delete_plugin_config(config_id).await {
+            Ok(_) => {
+                // Return the response
+                Ok(Response::builder()
+                    .status(StatusCode::NO_CONTENT)
+                    .body(Body::empty())
+                    .unwrap())
+            },
+            Err(e) => {
+                error!("Failed to delete plugin config from database: {}", e);
+                
+                Ok(Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(format!(r#"{{"error":"Failed to delete plugin config: {}"}}"#, e)))
+                    .unwrap())
+            }
+        }
     } else {
-        // If no database client is available, update the in-memory configuration only
-        debug!("No database client available, deleting plugin config in-memory only");
+        // No database client available
+        Ok(Response::builder()
+            .status(StatusCode::SERVICE_UNAVAILABLE)
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"error":"Database is unavailable"}"#))
+            .unwrap())
     }
-    
-    // Update the in-memory configuration
-    {
-        let mut config = state.shared_config.write().await;
-        
-        // Find the index of the plugin config with the specified ID
-        let index = config.plugin_configs
-            .iter()
-            .position(|pc| pc.id == config_id)
-            .ok_or_else(|| anyhow::anyhow!("Plugin config not found"))?;
-        
-        // Remove the plugin config
-        config.plugin_configs.remove(index);
-        
-        // Update the last updated timestamp
-        config.last_updated_at = chrono::Utc::now();
-    }
-    
-    // Return the response
-    Ok(Response::builder()
-        .status(StatusCode::NO_CONTENT)
-        .body(Body::empty())
-        .unwrap())
 }

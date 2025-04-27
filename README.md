@@ -132,6 +132,7 @@ export FERRUM_DP_GRPC_AUTH_TOKEN=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 | `FERRUM_MAX_BODY_SIZE_BYTES` | Maximum request body size | `10485760` | No |
 | `FERRUM_DNS_CACHE_TTL_SECONDS` | TTL for DNS cache entries | `300` | No |
 | `FERRUM_DNS_OVERRIDES` | DNS hostname overrides (JSON) | `{}` | No |
+| `FERRUM_DEFAULT_PAGINATION_LIMIT` | Default page size for Admin API list endpoints | `500` | No |
 
 ### File Configuration Format
 
@@ -186,25 +187,46 @@ The `proxies` table must have a UNIQUE constraint on the `listen_path` column.
 
 ## Admin API
 
-The Admin API is available in Database and CP modes, providing a RESTful interface for managing gateway resources.
+The Admin API is available in Database and Control Plane modes, providing a RESTful interface for managing gateway configuration.
 
 ### Authentication
 
-All Admin API requests (except `/health`) require a valid JWT token in the `Authorization` header:
+Admin API requests must include a valid JWT token in the Authorization header:
 
 ```
-Authorization: Bearer <jwt_token>
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
 
-You can generate a token with a tool like:
+### Pagination
 
-```bash
-export TOKEN=$(curl -s -X POST http://localhost:9000/admin/tokens \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"your-admin-password"}' | jq -r '.token')
+All list endpoints (GET requests that return collections) support pagination with the following query parameters:
+
+- `page`: Page number (1-based, default: 1)
+- `limit`: Items per page (default: value from `FERRUM_DEFAULT_PAGINATION_LIMIT`, max: 1000)
+
+Example request:
+```
+GET /consumers?page=2&limit=100
 ```
 
-### API Endpoints
+Paginated responses have the following format:
+
+```json
+{
+  "data": [
+    { /* resource object */ },
+    { /* resource object */ }
+  ],
+  "pagination": {
+    "page": 2,
+    "limit": 100,
+    "total": 350,
+    "pages": 4
+  }
+}
+```
+
+### Endpoints
 
 #### Proxies
 

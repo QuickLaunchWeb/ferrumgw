@@ -627,6 +627,48 @@ pub async fn delete_consumer(pool: &Pool<Postgres>, consumer_id: &str) -> Result
     Ok(())
 }
 
+/// Get a consumer by ID from the database
+pub async fn get_consumer_by_id(pool: &Pool<Postgres>, consumer_id: &str) -> Result<Consumer> {
+    info!("Fetching consumer from PostgreSQL database by ID: {}", consumer_id);
+    
+    let row = sqlx::query!(
+        r#"
+        SELECT 
+            id, username, custom_id, credentials, created_at, updated_at
+        FROM consumers
+        WHERE id = $1
+        "#,
+        consumer_id
+    )
+    .fetch_optional(pool)
+    .await
+    .context("Failed to fetch consumer from PostgreSQL database")?;
+    
+    match row {
+        Some(row) => {
+            // PostgreSQL stores credentials as JSONB which we need to convert to HashMap
+            let credentials = match row.credentials {
+                Some(jsonb) => {
+                    // Convert JSONB to HashMap
+                    serde_json::from_value::<HashMap<String, Value>>(jsonb.clone())
+                        .unwrap_or_else(|_| HashMap::new())
+                },
+                None => HashMap::new(),
+            };
+            
+            Ok(Consumer {
+                id: row.id,
+                username: row.username,
+                custom_id: row.custom_id,
+                credentials,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+            })
+        },
+        None => Err(anyhow!("Consumer with ID '{}' not found", consumer_id))
+    }
+}
+
 /// Create a new plugin configuration in the database
 pub async fn create_plugin_config(pool: &Pool<Postgres>, plugin_config: PluginConfig) -> Result<PluginConfig> {
     info!("Creating new plugin configuration in PostgreSQL database: {}", plugin_config.plugin_name);

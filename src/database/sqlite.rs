@@ -236,6 +236,30 @@ async fn load_proxy_plugin_associations(pool: &Pool<Sqlite>) -> Result<HashMap<S
     Ok(proxy_plugin_map)
 }
 
+/// Get a consumer by ID from the database
+pub async fn get_consumer_by_id(pool: &Pool<Sqlite>, consumer_id: &str) -> Result<Consumer> {
+    info!("Fetching consumer from SQLite database by ID: {}", consumer_id);
+    
+    let row = sqlx::query_as!(
+        Consumer,
+        r#"
+        SELECT 
+            id, username, custom_id, credentials, created_at, updated_at
+        FROM consumers
+        WHERE id = ?
+        "#,
+        consumer_id
+    )
+    .fetch_optional(pool)
+    .await
+    .context("Failed to fetch consumer from SQLite database")?;
+    
+    match row {
+        Some(consumer) => Ok(consumer),
+        None => Err(anyhow!("Consumer with ID '{}' not found", consumer_id))
+    }
+}
+
 /// SQLite implementation of the database client
 pub struct SqliteClient {
     pool: SqlitePool,

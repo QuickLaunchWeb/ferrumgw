@@ -61,6 +61,9 @@ pub struct EnvConfig {
     // DNS caching
     pub dns_cache_ttl_seconds: u64,
     pub dns_overrides: HashMap<String, String>,
+    
+    // Pagination settings
+    pub default_pagination_limit: usize,
 }
 
 impl EnvConfig {
@@ -125,6 +128,7 @@ impl EnvConfig {
             max_body_size_bytes: 10485760,
             dns_cache_ttl_seconds: 300,
             dns_overrides: HashMap::new(),
+            default_pagination_limit: 500,
         };
         
         match config.mode {
@@ -272,6 +276,12 @@ impl EnvConfig {
             },
             Err(_) => HashMap::new()
         };
+        
+        // Pagination settings
+        config.default_pagination_limit = Self::parse_usize_with_default(
+            "FERRUM_DEFAULT_PAGINATION_LIMIT", 
+            500
+        )?;
         
         Ok(config)
     }

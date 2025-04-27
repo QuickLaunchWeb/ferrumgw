@@ -16,10 +16,12 @@ use crate::config::env_config::EnvConfig;
 use crate::config::data_model::{Configuration, Proxy, Consumer, PluginConfig};
 use crate::database::DatabaseClient;
 use crate::proxy::tls;
+use crate::modes::OperationMode;
 
 mod routes;
 mod auth;
 mod metrics;
+pub mod pagination;
 
 /// Claims structure for JWT tokens
 #[derive(Debug, Serialize, Deserialize)]
@@ -65,6 +67,7 @@ impl AdminServer {
             let shared_config = Arc::clone(&self.shared_config);
             let db_client = self.db_client.clone();
             let jwt_secret = self.jwt_secret.clone();
+            let operation_mode = self.env_config.mode;
             
             info!("Starting HTTP admin server on {}", addr);
             
@@ -74,6 +77,7 @@ impl AdminServer {
                     shared_config, 
                     db_client,
                     jwt_secret,
+                    operation_mode,
                 ).await {
                     error!("HTTP admin server error: {}", e);
                 }
@@ -92,6 +96,7 @@ impl AdminServer {
                 let jwt_secret = self.jwt_secret.clone();
                 let cert_path = cert_path.clone();
                 let key_path = key_path.clone();
+                let operation_mode = self.env_config.mode;
                 
                 info!("Starting HTTPS admin server on {}", addr);
                 
@@ -103,6 +108,7 @@ impl AdminServer {
                         shared_config,
                         db_client,
                         jwt_secret,
+                        operation_mode,
                     ).await {
                         error!("HTTPS admin server error: {}", e);
                     }
@@ -123,6 +129,7 @@ impl AdminServer {
         shared_config: Arc<RwLock<Configuration>>,
         db_client: DatabaseClient,
         jwt_secret: String,
+        operation_mode: OperationMode,
     ) -> Result<()> {
         // Create TCP listener
         let listener = TcpListener::bind(addr).await?;
@@ -132,6 +139,7 @@ impl AdminServer {
             shared_config,
             db_client,
             jwt_secret,
+            operation_mode,
         });
         
         // Accept and serve connections
@@ -178,6 +186,7 @@ impl AdminServer {
         shared_config: Arc<RwLock<Configuration>>,
         db_client: DatabaseClient,
         jwt_secret: String,
+        operation_mode: OperationMode,
     ) -> Result<()> {
         // Load TLS configuration
         let tls_config = tls::load_server_config(&cert_path, &key_path)
@@ -191,6 +200,7 @@ impl AdminServer {
             shared_config,
             db_client,
             jwt_secret,
+            operation_mode,
         });
         
         // Accept and serve connections
@@ -243,9 +253,10 @@ impl AdminServer {
 
 /// Shared state for the Admin API server
 pub struct AdminApiState {
-    shared_config: Arc<RwLock<Configuration>>,
-    db_client: DatabaseClient,
-    jwt_secret: String,
+    pub shared_config: Arc<RwLock<Configuration>>,
+    pub db_client: DatabaseClient,
+    pub jwt_secret: String,
+    pub operation_mode: OperationMode,
 }
 
 /// Handle an incoming request to the Admin API
@@ -328,7 +339,7 @@ async fn route_request(
     // Route based on path and method
     match (method, path) {
         (&Method::GET, "/proxies") => {
-            routes::proxies::list_proxies(state).await
+            routes::proxies::list_proxies(req, state).await
         },
         (&Method::POST, "/proxies") => {
             routes::proxies::create_proxy(req, state).await
@@ -346,7 +357,7 @@ async fn route_request(
             routes::proxies::delete_proxy(proxy_id, state).await
         },
         (&Method::GET, "/consumers") => {
-            routes::consumers::list_consumers(state).await
+            routes::consumers::list_consumers(req, state).await
         },
         (&Method::POST, "/consumers") => {
             routes::consumers::create_consumer(req, state).await
@@ -403,10 +414,10 @@ async fn route_request(
             }
         },
         (&Method::GET, "/plugins") => {
-            routes::plugins::list_plugin_types(state).await
+            routes::plugins::list_plugin_types(req, state).await
         },
         (&Method::GET, "/plugins/config") => {
-            routes::plugins::list_plugin_configs(state).await
+            routes::plugins::list_plugin_configs(req, state).await
         },
         (&Method::POST, "/plugins/config") => {
             routes::plugins::create_plugin_config(req, state).await

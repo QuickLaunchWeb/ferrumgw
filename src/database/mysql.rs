@@ -286,6 +286,51 @@ async fn load_proxy_plugin_associations(pool: &Pool<MySql>) -> Result<HashMap<St
     Ok(proxy_plugin_map)
 }
 
+/// Get a consumer by ID from the database
+pub async fn get_consumer_by_id(pool: &Pool<MySql>, consumer_id: &str) -> Result<Consumer> {
+    info!("Fetching consumer from MySQL database by ID: {}", consumer_id);
+    
+    let row = sqlx::query(
+        r#"
+        SELECT 
+            id, username, custom_id, credentials, created_at, updated_at
+        FROM consumers
+        WHERE id = ?
+        "#
+    )
+    .bind(consumer_id)
+    .fetch_optional(pool)
+    .await
+    .context("Failed to fetch consumer from MySQL database")?;
+    
+    match row {
+        Some(row) => {
+            let id: String = row.try_get("id")?;
+            let username: String = row.try_get("username")?;
+            let custom_id: Option<String> = row.try_get("custom_id")?;
+            let credentials_json: Option<String> = row.try_get("credentials")?;
+            let created_at: DateTime<Utc> = row.try_get("created_at")?;
+            let updated_at: DateTime<Utc> = row.try_get("updated_at")?;
+            
+            let credentials = match credentials_json {
+                Some(json) => serde_json::from_str::<HashMap<String, Value>>(&json)
+                    .unwrap_or_else(|_| HashMap::new()),
+                None => HashMap::new(),
+            };
+            
+            Ok(Consumer {
+                id,
+                username,
+                custom_id,
+                credentials,
+                created_at,
+                updated_at,
+            })
+        },
+        None => Err(anyhow!("Consumer with ID '{}' not found", consumer_id))
+    }
+}
+
 /// MySQL implementation of the database client
 pub struct MySqlClient {
     pool: MySqlPool,
