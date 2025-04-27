@@ -6,7 +6,7 @@ use serde::{Serialize, Deserialize};
 use tracing::{debug, warn, info};
 use jsonwebtoken::{decode, DecodingKey, Validation, Algorithm};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::plugins::Plugin;
@@ -102,7 +102,32 @@ impl Default for OAuth2AuthConfig {
 pub struct OAuth2AuthPlugin {
     config: OAuth2AuthConfig,
     http_client: hyper::Client<HttpsConnector<HttpConnector>>,
-    // In a full implementation, this would include a JWKS client and caches
+    // Cache for JWKS keys
+    jwks_cache: Arc<RwLock<HashMap<String, JwksCache>>>,
+    // Cache for validated tokens
+    token_cache: Arc<RwLock<HashMap<String, TokenCacheEntry>>>,
+}
+
+/// Cache entry for JWKS
+#[derive(Debug, Clone)]
+struct JwksCache {
+    keys: HashMap<String, JwksKey>,
+    fetched_at: SystemTime,
+}
+
+/// Cached JWKS key
+#[derive(Debug, Clone)]
+struct JwksKey {
+    key_id: String,
+    algorithm: Algorithm,
+    decoding_key: DecodingKey,
+}
+
+/// Cache entry for validated tokens
+#[derive(Debug, Clone)]
+struct TokenCacheEntry {
+    claims: HashMap<String, serde_json::Value>,
+    expires_at: SystemTime,
 }
 
 impl OAuth2AuthPlugin {
@@ -142,6 +167,8 @@ impl OAuth2AuthPlugin {
         Ok(Self {
             config,
             http_client,
+            jwks_cache: Arc::new(RwLock::new(HashMap::new())),
+            token_cache: Arc::new(RwLock::new(HashMap::new())),
         })
     }
     
@@ -163,10 +190,65 @@ impl OAuth2AuthPlugin {
     
     /// Validate a token using the configured validation mode
     async fn validate_token(&self, token: &str) -> Result<Option<HashMap<String, serde_json::Value>>> {
-        match self.config.validation_mode {
-            ValidationMode::Introspection => self.validate_token_introspection(token).await,
-            ValidationMode::Jwks => self.validate_token_jwks(token).await,
+        // Check token cache first if enabled
+        if self.config.use_cache {
+            let token_cache = self.token_cache.read().unwrap();
+            if let Some(cache_entry) = token_cache.get(token) {
+                let now = SystemTime::now();
+                if now < cache_entry.expires_at {
+                    // Token is in cache and not expired
+                    debug!("OAuth2 token validation cache hit");
+                    return Ok(Some(cache_entry.claims.clone()));
+                }
+                // Token expired, will need to validate again
+                debug!("OAuth2 token in cache but expired");
+            }
         }
+        
+        // Token not in cache or cache disabled, validate according to mode
+        let validation_result = match self.config.validation_mode {
+            ValidationMode::Introspection => self.validate_token_introspection(token).await?,
+            ValidationMode::Jwks => self.validate_token_jwks(token).await?,
+        };
+        
+        // If validation successful and caching is enabled, store in cache
+        if let Some(claims) = &validation_result {
+            if self.config.use_cache {
+                // Determine expiration time
+                let expires_at = if let Some(exp) = claims.get("exp").and_then(|v| v.as_u64()) {
+                    // Use token's expiration if available
+                    SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(exp))
+                        .unwrap_or_else(|| SystemTime::now().checked_add(Duration::from_secs(self.config.cache_ttl_seconds))
+                            .unwrap_or_else(|| SystemTime::now()))
+                } else {
+                    // Otherwise use configured TTL
+                    SystemTime::now().checked_add(Duration::from_secs(self.config.cache_ttl_seconds))
+                        .unwrap_or_else(|| SystemTime::now())
+                };
+                
+                // Store in cache
+                let mut token_cache = self.token_cache.write().unwrap();
+                token_cache.insert(token.to_string(), TokenCacheEntry {
+                    claims: claims.clone(),
+                    expires_at,
+                });
+                
+                // Cleanup expired entries occasionally
+                if token_cache.len() > 100 && rand::random::<f32>() < 0.1 {
+                    self.cleanup_token_cache();
+                }
+            }
+        }
+        
+        Ok(validation_result)
+    }
+    
+    /// Clean up expired entries in the token cache
+    fn cleanup_token_cache(&self) {
+        let now = SystemTime::now();
+        let mut token_cache = self.token_cache.write().unwrap();
+        token_cache.retain(|_, entry| entry.expires_at > now);
+        debug!("Cleaned up token cache, {} entries remaining", token_cache.len());
     }
     
     /// Validate a token using OAuth2 token introspection
@@ -240,26 +322,21 @@ impl OAuth2AuthPlugin {
     
     /// Validate a token using JWKS
     async fn validate_token_jwks(&self, token: &str) -> Result<Option<HashMap<String, serde_json::Value>>> {
-        // NOTE: In a full implementation, this would:
-        // 1. Parse the token header to get the key ID (kid)
-        // 2. Fetch the JWKS from the jwks_uri if not cached
-        // 3. Find the key with the matching kid
-        // 4. Validate the token signature using the key
-        // 5. Validate the token claims (exp, iat, iss, aud)
-        // 6. Return the claims if valid
+        if self.config.jwks_uri.is_none() {
+            return Err(anyhow::anyhow!("JWKS URI is not configured"));
+        }
         
-        // For this simplified implementation, we'll simulate token validation
-        debug!("JWKS validation would occur here");
+        let jwks_uri = self.config.jwks_uri.as_ref().unwrap();
         
-        // Parse the token without validation to extract claims
+        // Parse the token header to extract the key ID (kid)
         let token_parts: Vec<&str> = token.split('.').collect();
         if token_parts.len() != 3 {
             return Err(anyhow::anyhow!("Invalid JWT format"));
         }
         
-        // Decode the payload part (without validation)
-        let payload = token_parts[1];
-        let padding = match payload.len() % 4 {
+        // Decode the header part
+        let header = token_parts[0];
+        let padding = match header.len() % 4 {
             0 => "",
             1 => "===",
             2 => "==",
@@ -267,56 +344,202 @@ impl OAuth2AuthPlugin {
             _ => panic!("Impossible padding calculation"),
         };
         
-        let decoded = base64::Engine::decode(
+        let decoded_header = base64::Engine::decode(
             &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-            format!("{}{}", payload, padding)
+            format!("{}{}", header, padding)
         )?;
         
-        let claims: serde_json::Value = serde_json::from_slice(&decoded)?;
+        let header_json: serde_json::Value = serde_json::from_slice(&decoded_header)?;
         
-        // Check expiration
-        if let Some(exp) = claims.get("exp").and_then(|v| v.as_u64()) {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            
-            if exp < now {
-                debug!("OAuth2 token has expired");
-                return Ok(None);
-            }
-        }
+        // Extract the key ID (kid) from the token header
+        let kid = match header_json.get("kid").and_then(|v| v.as_str()) {
+            Some(kid) => kid.to_string(),
+            None => return Err(anyhow::anyhow!("JWT header does not contain a key ID (kid)")),
+        };
         
-        // Check issuer if configured
-        if let Some(expected_issuer) = &self.config.issuer {
-            if claims.get("iss")
-                .and_then(|v| v.as_str())
-                .map(|s| s != expected_issuer)
-                .unwrap_or(true)
-            {
-                debug!("OAuth2 token has incorrect issuer");
-                return Ok(None);
-            }
-        }
+        // Extract algorithm from header
+        let alg = header_json.get("alg").and_then(|v| v.as_str()).unwrap_or("RS256");
+        let algorithm = match alg {
+            "RS256" => Algorithm::RS256,
+            "RS384" => Algorithm::RS384,
+            "RS512" => Algorithm::RS512,
+            _ => return Err(anyhow::anyhow!("Unsupported JWT algorithm: {}", alg)),
+        };
         
-        // Check audience if configured
-        if let Some(expected_audience) = &self.config.audience {
-            let audience_matched = match claims.get("aud") {
-                Some(serde_json::Value::String(s)) => s == expected_audience,
-                Some(serde_json::Value::Array(a)) => a.iter()
-                    .any(|v| v.as_str().map(|s| s == expected_audience).unwrap_or(false)),
-                _ => false,
+        // Try to find the key in the cache first
+        let decoding_key = {
+            let should_fetch_jwks = {
+                let jwks_cache = self.jwks_cache.read().unwrap();
+                if let Some(cache) = jwks_cache.get(jwks_uri) {
+                    // Check if cache is still valid (not older than 24 hours)
+                    let cache_age = SystemTime::now()
+                        .duration_since(cache.fetched_at)
+                        .unwrap_or_default();
+                    
+                    if cache_age > Duration::from_secs(86400) {
+                        debug!("JWKS cache is too old, refreshing");
+                        true
+                    } else if cache.keys.contains_key(&kid) {
+                        // Key found in valid cache
+                        let jwks_key = &cache.keys[&kid];
+                        if jwks_key.algorithm == algorithm {
+                            debug!("JWKS key found in cache: {}", kid);
+                            return self.validate_token_with_key(token, &jwks_key.decoding_key, algorithm);
+                        } else {
+                            debug!("JWKS key algorithm mismatch, refreshing");
+                            true
+                        }
+                    } else {
+                        // Key not found in cache, might need to refresh
+                        debug!("JWKS key not found in cache, fetching from server");
+                        true
+                    }
+                } else {
+                    // No cache for this JWKS URI
+                    debug!("No JWKS cache for URI: {}", jwks_uri);
+                    true
+                }
             };
             
-            if !audience_matched {
-                debug!("OAuth2 token has incorrect audience");
+            if should_fetch_jwks {
+                // Fetch JWKS and update cache
+                debug!("Fetching JWKS from {}", jwks_uri);
+                let keys = self.fetch_jwks(jwks_uri).await?;
+                
+                // Find the key we need
+                if let Some(jwks_key) = keys.get(&kid) {
+                    // Store the fetched JWKS in cache
+                    let mut jwks_cache = self.jwks_cache.write().unwrap();
+                    jwks_cache.insert(jwks_uri.to_string(), JwksCache {
+                        keys,
+                        fetched_at: SystemTime::now(),
+                    });
+                    
+                    // Return the key for validation
+                    jwks_key.decoding_key.clone()
+                } else {
+                    return Err(anyhow::anyhow!("No matching key found in JWKS for kid: {}", kid));
+                }
+            } else {
+                // Key found in cache but we need to extract it again due to borrowing rules
+                let jwks_cache = self.jwks_cache.read().unwrap();
+                let cache = jwks_cache.get(jwks_uri).unwrap();
+                let jwks_key = cache.keys.get(&kid).unwrap();
+                jwks_key.decoding_key.clone()
+            }
+        };
+        
+        // Validate the token with the key
+        self.validate_token_with_key(token, &decoding_key, algorithm)
+    }
+    
+    /// Fetch JWKS from the server and parse keys
+    async fn fetch_jwks(&self, jwks_uri: &str) -> Result<HashMap<String, JwksKey>> {
+        // Make request to JWKS endpoint
+        let req = Request::builder()
+            .method("GET")
+            .uri(jwks_uri)
+            .header("Accept", "application/json")
+            .body(Body::empty())?;
+        
+        let resp = self.http_client.request(req).await?;
+        
+        if resp.status() != StatusCode::OK {
+            return Err(anyhow::anyhow!("Failed to fetch JWKS: HTTP {}", resp.status()));
+        }
+        
+        let body_bytes = hyper::body::to_bytes(resp.into_body()).await?;
+        let jwks: serde_json::Value = serde_json::from_slice(&body_bytes)?;
+        
+        // Parse keys
+        let keys = match jwks.get("keys").and_then(|v| v.as_array()) {
+            Some(keys) => keys,
+            None => return Err(anyhow::anyhow!("Invalid JWKS format: missing 'keys' array")),
+        };
+        
+        let mut result = HashMap::new();
+        
+        // Process each key in the JWKS
+        for key_value in keys {
+            let kid = match key_value.get("kid").and_then(|k| k.as_str()) {
+                Some(kid) => kid.to_string(),
+                None => continue, // Skip keys without kid
+            };
+            
+            let alg = key_value.get("alg").and_then(|a| a.as_str()).unwrap_or("RS256");
+            let algorithm = match alg {
+                "RS256" => Algorithm::RS256,
+                "RS384" => Algorithm::RS384,
+                "RS512" => Algorithm::RS512,
+                _ => continue, // Skip unsupported algorithms
+            };
+            
+            // Extract key components based on key type
+            if key_value.get("kty").and_then(|k| k.as_str()) == Some("RSA") {
+                // RSA key
+                let n = match key_value.get("n").and_then(|v| v.as_str()) {
+                    Some(n) => n,
+                    None => continue, // Skip keys without modulus
+                };
+                
+                let e = match key_value.get("e").and_then(|v| v.as_str()) {
+                    Some(e) => e,
+                    None => continue, // Skip keys without exponent
+                };
+                
+                // Create decoding key
+                match DecodingKey::from_rsa_components(n, e) {
+                    Ok(decoding_key) => {
+                        result.insert(kid.clone(), JwksKey {
+                            key_id: kid,
+                            algorithm,
+                            decoding_key,
+                        });
+                    },
+                    Err(e) => {
+                        debug!("Failed to create decoding key from RSA components: {}", e);
+                        continue;
+                    }
+                }
+            }
+            // Support for other key types can be added here
+        }
+        
+        if result.is_empty() {
+            return Err(anyhow::anyhow!("No valid keys found in JWKS"));
+        }
+        
+        debug!("Parsed {} keys from JWKS", result.len());
+        Ok(result)
+    }
+    
+    /// Validate a token with a specific key
+    fn validate_token_with_key(&self, token: &str, decoding_key: &DecodingKey, algorithm: Algorithm) -> Result<Option<HashMap<String, serde_json::Value>>> {
+        // Set up validation parameters
+        let mut validation = Validation::new(algorithm);
+        
+        // Set expected issuer if configured
+        if let Some(issuer) = &self.config.issuer {
+            validation.set_issuer(&[issuer.as_str()]);
+        }
+        
+        // Set expected audience if configured
+        if let Some(audience) = &self.config.audience {
+            validation.set_audience(&[audience.as_str()]);
+        }
+        
+        // Decode and validate the token
+        let token_data = match decode::<serde_json::Value>(token, decoding_key, &validation) {
+            Ok(token_data) => token_data,
+            Err(e) => {
+                debug!("Token validation failed: {}", e);
                 return Ok(None);
             }
-        }
+        };
         
         // Extract claims as a HashMap
         let mut result = HashMap::new();
-        if let serde_json::Value::Object(obj) = claims {
+        if let serde_json::Value::Object(obj) = token_data.claims {
             for (key, value) in obj {
                 result.insert(key, value);
             }

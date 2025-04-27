@@ -1,11 +1,15 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use anyhow::{Result, Context};
 use async_trait::async_trait;
 use hyper::{Body, Request, Response};
 use tracing::{debug, info, error, warn};
+use tokio::spawn;
+use tokio::time::sleep;
+use tokio::select;
 
 use crate::proxy::handler::RequestContext;
+use crate::config::data_model::{PluginConfig, Proxy, Configuration};
 
 // Import plugin implementations
 mod stdout_logging;
@@ -147,21 +151,30 @@ impl PluginRegistry {
 /// Manager for plugin instances and execution
 pub struct PluginManager {
     registry: PluginRegistry,
-    // In a complete implementation, this would manage plugin instances
-    // and organize them into execution pipelines
+    // Cached plugins for better performance
+    global_plugins: Arc<RwLock<Vec<Box<dyn Plugin>>>>,
+    // Shared configuration for looking up plugin configs
+    shared_config: Arc<RwLock<Configuration>>,
 }
 
 impl PluginManager {
     /// Creates a new plugin manager
-    pub fn new() -> Self {
+    pub fn new(shared_config: Arc<RwLock<Configuration>>) -> Self {
         Self {
             registry: PluginRegistry::new(),
+            global_plugins: Arc::new(RwLock::new(Vec::new())),
+            shared_config,
         }
     }
     
     /// Lists all available plugin types
     pub fn available_plugins(&self) -> Vec<String> {
         self.registry.available_plugins()
+    }
+    
+    /// Create a plugin instance from configuration
+    pub fn create_plugin(&self, plugin_name: &str, config: serde_json::Value) -> Result<Box<dyn Plugin>> {
+        self.registry.create_plugin(plugin_name, config)
     }
     
     /// Runs the pre-proxy plugin pipeline on a request
@@ -171,12 +184,76 @@ impl PluginManager {
         mut req: Request<Body>,
         ctx: &mut RequestContext,
     ) -> Result<(Request<Body>, bool)> {
-        // In a complete implementation, this would:
-        // 1. Determine which plugins are active for this proxy
-        // 2. Run them in the correct order with appropriate hooks
+        let proxy = &ctx.proxy;
         
-        // For now, we'll just return the request unchanged
-        debug!("Pre-proxy plugins would run here (actual implementation pending)");
+        // Get all relevant plugins for this proxy
+        let active_plugins = self.get_active_plugins_for_proxy(proxy).await?;
+        
+        // Execute on_request_received phase
+        debug!("Executing on_request_received phase for {} plugins", active_plugins.len());
+        for plugin in &active_plugins {
+            match plugin.on_request_received(&mut req, ctx).await {
+                Ok(true) => continue, // Continue to next plugin
+                Ok(false) => {
+                    debug!("Plugin {} rejected request in on_request_received phase", plugin.name());
+                    return Ok((req, false)); // Stop processing
+                },
+                Err(e) => {
+                    error!("Error in plugin {} during on_request_received: {}", plugin.name(), e);
+                    return Err(e);
+                }
+            }
+        }
+        
+        // Execute authenticate phase
+        debug!("Executing authenticate phase for {} plugins", active_plugins.len());
+        for plugin in &active_plugins {
+            match plugin.authenticate(&mut req, ctx).await {
+                Ok(true) => continue, // Continue to next plugin
+                Ok(false) => {
+                    debug!("Plugin {} rejected request in authenticate phase", plugin.name());
+                    return Ok((req, false)); // Stop processing
+                },
+                Err(e) => {
+                    error!("Error in plugin {} during authenticate: {}", plugin.name(), e);
+                    return Err(e);
+                }
+            }
+        }
+        
+        // Execute authorize phase
+        debug!("Executing authorize phase for {} plugins", active_plugins.len());
+        for plugin in &active_plugins {
+            match plugin.authorize(&mut req, ctx).await {
+                Ok(true) => continue, // Continue to next plugin
+                Ok(false) => {
+                    debug!("Plugin {} rejected request in authorize phase", plugin.name());
+                    return Ok((req, false)); // Stop processing
+                },
+                Err(e) => {
+                    error!("Error in plugin {} during authorize: {}", plugin.name(), e);
+                    return Err(e);
+                }
+            }
+        }
+        
+        // Execute before_proxy phase
+        debug!("Executing before_proxy phase for {} plugins", active_plugins.len());
+        for plugin in &active_plugins {
+            match plugin.before_proxy(&mut req, ctx).await {
+                Ok(true) => continue, // Continue to next plugin
+                Ok(false) => {
+                    debug!("Plugin {} rejected request in before_proxy phase", plugin.name());
+                    return Ok((req, false)); // Stop processing
+                },
+                Err(e) => {
+                    error!("Error in plugin {} during before_proxy: {}", plugin.name(), e);
+                    return Err(e);
+                }
+            }
+        }
+        
+        // All plugins executed successfully
         Ok((req, true))
     }
     
@@ -187,12 +264,130 @@ impl PluginManager {
         mut resp: Response<Body>,
         ctx: &mut RequestContext,
     ) -> Result<Response<Body>> {
-        // In a complete implementation, this would:
-        // 1. Determine which plugins are active for this proxy
-        // 2. Run them in the correct order with appropriate hooks
+        let proxy = &ctx.proxy;
         
-        // For now, we'll just return the response unchanged
-        debug!("Post-proxy plugins would run here (actual implementation pending)");
+        // Get all relevant plugins for this proxy
+        let active_plugins = self.get_active_plugins_for_proxy(proxy).await?;
+        
+        // Execute after_proxy phase
+        debug!("Executing after_proxy phase for {} plugins", active_plugins.len());
+        for plugin in &active_plugins {
+            match plugin.after_proxy(&mut resp, ctx).await {
+                Ok(()) => continue, // Continue to next plugin
+                Err(e) => {
+                    error!("Error in plugin {} during after_proxy: {}", plugin.name(), e);
+                    return Err(e);
+                }
+            }
+        }
+        
+        // All plugins executed successfully
         Ok(resp)
+    }
+    
+    /// Execute the logging phase for all plugins
+    pub async fn run_log_plugins(
+        &self,
+        req: &Request<Body>,
+        resp: &Response<Body>,
+        ctx: &RequestContext,
+    ) -> Result<()> {
+        let proxy = &ctx.proxy;
+        
+        // Get all relevant plugins for this proxy
+        let active_plugins = self.get_active_plugins_for_proxy(proxy).await?;
+        
+        // Execute log phase (non-blocking, parallel execution)
+        debug!("Executing log phase for {} plugins", active_plugins.len());
+        let mut log_tasks = Vec::new();
+        
+        for plugin in active_plugins {
+            let p = plugin;
+            let req = req.clone();
+            let resp = resp.clone();
+            let ctx = ctx.clone();
+            
+            let task = spawn(async move {
+                if let Err(e) = p.log(&req, &resp, &ctx).await {
+                    warn!("Error in plugin {} during log phase: {}", p.name(), e);
+                }
+            });
+            
+            log_tasks.push(task);
+        }
+        
+        // Wait for all logging tasks to complete or time out
+        for task in log_tasks {
+            select! {
+                _ = task => {},
+                _ = sleep(std::time::Duration::from_secs(5)) => {
+                    warn!("Logging task timed out after 5 seconds");
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Get all active plugins for a proxy
+    async fn get_active_plugins_for_proxy(&self, proxy: &Proxy) -> Result<Vec<Box<dyn Plugin>>> {
+        // Get shared configuration
+        let mut plugins: Vec<Box<dyn Plugin>> = Vec::new();
+        
+        // Get global plugins from cache
+        {
+            let global_plugins = self.global_plugins.read().await;
+            for plugin in global_plugins.iter() {
+                plugins.push(self.registry.create_plugin(plugin.name(), serde_json::json!({}))?);
+            }
+        }
+        
+        // Process proxy-specific plugins
+        for plugin_association in &proxy.plugins {
+            if let Some(config) = &plugin_association.embedded_config {
+                // If config is embedded in proxy config, use it directly
+                if let Ok(config_copy) = serde_json::to_value(config) {
+                    if let Ok(plugin_config) = self.get_plugin_config_by_id(&plugin_association.plugin_config_id).await {
+                        // Create the plugin with its configuration
+                        if let Ok(plugin) = self.registry.create_plugin(&plugin_config.plugin_name, config_copy) {
+                            plugins.push(plugin);
+                        }
+                    }
+                }
+            } else {
+                // Otherwise, look up the plugin config by ID
+                if let Ok(plugin_config) = self.get_plugin_config_by_id(&plugin_association.plugin_config_id).await {
+                    // Create the plugin with its configuration
+                    if let Ok(plugin) = self.registry.create_plugin(&plugin_config.plugin_name, plugin_config.config.clone()) {
+                        plugins.push(plugin);
+                    }
+                }
+            }
+        }
+        
+        Ok(plugins)
+    }
+    
+    /// Get plugin config by ID from the shared configuration
+    async fn get_plugin_config_by_id(&self, id: &str) -> Result<PluginConfig> {
+        // First check in-memory configuration
+        {
+            let config = self.shared_config.read().await;
+            if let Some(plugin_config) = config.plugin_configs.iter().find(|pc| pc.id == id) {
+                return Ok(plugin_config.clone());
+            }
+        }
+        
+        // If not found in memory, check database if available
+        if let Ok(db) = crate::db::get_connection() {
+            match crate::db::plugin_configs::get_plugin_config_by_id(&db, id).await {
+                Ok(Some(plugin_config)) => return Ok(plugin_config),
+                Ok(None) => return Err(anyhow::anyhow!("Plugin config not found: {}", id)),
+                Err(e) => return Err(anyhow::anyhow!("Database error looking up plugin config: {}", e)),
+            }
+        }
+        
+        // Not found
+        Err(anyhow::anyhow!("Plugin config not found: {}", id))
     }
 }

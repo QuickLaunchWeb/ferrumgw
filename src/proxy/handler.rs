@@ -87,7 +87,7 @@ impl ProxyHandler {
         // Run pre-proxy plugins (authentication, access control, etc.)
         let (modified_req, should_continue) = match self.plugin_manager.run_pre_proxy_plugins(req, &mut context).await {
             Ok((modified_req, true)) => (modified_req, true),
-            Ok((_, false)) => {
+            Ok((modified_req, false)) => {
                 // Plugin indicated that we should not continue with the proxy
                 let rejection_response = Response::builder()
                     .status(StatusCode::FORBIDDEN)
@@ -101,6 +101,11 @@ impl ProxyHandler {
                         rejection_response
                     });
                 
+                // Always run logging phase
+                if let Err(e) = self.plugin_manager.run_log_plugins(&modified_req, &response, &context).await {
+                    error!("Error in logging plugins: {}", e);
+                }
+                
                 return Ok(response);
             },
             Err(e) => {
@@ -111,6 +116,11 @@ impl ProxyHandler {
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .body(Body::from("Internal server error in request processing"))
                     .unwrap();
+                
+                // Try to run logging phase even for errors
+                if let Err(log_err) = self.plugin_manager.run_log_plugins(&req, &error_response, &context).await {
+                    error!("Error in logging plugins: {}", log_err);
+                }
                 
                 return Ok(error_response);
             }
@@ -123,6 +133,11 @@ impl ProxyHandler {
                 .body(Body::from("Internal server error: plugin chain inconsistency"))
                 .unwrap();
             
+            // Run logging phase
+            if let Err(e) = self.plugin_manager.run_log_plugins(&modified_req, &error_response, &context).await {
+                error!("Error in logging plugins: {}", e);
+            }
+            
             return Ok(error_response);
         }
         
@@ -132,10 +147,17 @@ impl ProxyHandler {
             Err(e) => {
                 error!("Failed to resolve backend host {}: {}", proxy.backend_host, e);
                 
-                return Ok(Response::builder()
+                let response = Response::builder()
                     .status(StatusCode::BAD_GATEWAY)
                     .body(Body::from("Failed to resolve backend host"))
-                    .unwrap());
+                    .unwrap();
+                
+                // Run logging phase
+                if let Err(log_err) = self.plugin_manager.run_log_plugins(&modified_req, &response, &context).await {
+                    error!("Error in logging plugins: {}", log_err);
+                }
+                
+                return Ok(response);
             }
         };
         
@@ -144,57 +166,107 @@ impl ProxyHandler {
         
         // Build the backend URI
         let backend_path = router.construct_backend_path(&modified_req, &proxy);
-        let backend_uri = self.build_backend_uri(&proxy, &backend_ip, &backend_path, &modified_req)?;
+        let backend_uri = match self.build_backend_uri(&proxy, &backend_ip, &backend_path, &modified_req) {
+            Ok(uri) => uri,
+            Err(e) => {
+                error!("Failed to build backend URI: {}", e);
+                
+                let response = Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body(Body::from("Failed to build backend URI"))
+                    .unwrap();
+                
+                // Run logging phase
+                if let Err(log_err) = self.plugin_manager.run_log_plugins(&modified_req, &response, &context).await {
+                    error!("Error in logging plugins: {}", log_err);
+                }
+                
+                return Ok(response);
+            }
+        };
         
         // Prepare the outgoing request to the backend
-        let (backend_req, outgoing_body) = self.prepare_backend_request(modified_req, &proxy, backend_uri)?;
+        let (backend_req, outgoing_body) = match self.prepare_backend_request(modified_req.clone(), &proxy, backend_uri) {
+            Ok(result) => result,
+            Err(e) => {
+                error!("Failed to prepare backend request: {}", e);
+                
+                let response = Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body(Body::from("Failed to prepare backend request"))
+                    .unwrap();
+                
+                // Run logging phase
+                if let Err(log_err) = self.plugin_manager.run_log_plugins(&modified_req, &response, &context).await {
+                    error!("Error in logging plugins: {}", log_err);
+                }
+                
+                return Ok(response);
+            }
+        };
         
-        // Set backend request start time
-        let backend_start_time = Instant::now();
-        context.latency.gateway_processing = backend_start_time.duration_since(start_time);
+        // Record time before making backend request
+        let backend_start = Instant::now();
         
         // Send the request to the backend
-        let backend_response = match self.http_client.request(backend_req).await {
+        let resp = match self.http_client.request(backend_req).await {
             Ok(resp) => {
-                // Record backend time-to-first-byte (TTFB)
-                let backend_ttfb = Instant::now().duration_since(backend_start_time);
-                context.latency.backend_ttfb = backend_ttfb;
+                // Record backend response time
+                context.latency.backend_ttfb = backend_start.elapsed().as_millis() as u64;
+                context.latency.backend_total = backend_start.elapsed().as_millis() as u64;
                 resp
             },
             Err(e) => {
-                error!("Backend request error: {}", e);
+                error!("Error sending request to backend: {}", e);
                 
-                return Ok(Response::builder()
+                let response = Response::builder()
                     .status(StatusCode::BAD_GATEWAY)
-                    .body(Body::from(format!("Backend request failed: {}", e)))
-                    .unwrap());
+                    .body(Body::from(format!("Error sending request to backend: {}", e)))
+                    .unwrap();
+                
+                // Record backend failure
+                context.latency.backend_ttfb = 0;
+                context.latency.backend_total = backend_start.elapsed().as_millis() as u64;
+                
+                // Run logging phase
+                if let Err(log_err) = self.plugin_manager.run_log_plugins(&modified_req, &response, &context).await {
+                    error!("Error in logging plugins: {}", log_err);
+                }
+                
+                return Ok(response);
             }
         };
         
-        // Record total backend processing time once we have the response
-        context.latency.backend_total = Instant::now().duration_since(backend_start_time);
-        
-        // Process the backend response (transform headers, etc.)
-        let processed_response = self.process_backend_response(backend_response).await?;
-        
-        // Run post-proxy plugins
-        let final_response = match self.plugin_manager.run_post_proxy_plugins(processed_response, &mut context).await {
-            Ok(response) => response,
+        // Process the backend response through post-proxy plugins
+        let processed_resp = match self.plugin_manager.run_post_proxy_plugins(resp, &mut context).await {
+            Ok(resp) => resp,
             Err(e) => {
                 error!("Error in post-proxy plugins: {}", e);
                 
-                // Return the processed response anyway, as it's better than nothing
-                processed_response
+                // If post-proxy plugins fail, return a server error
+                let error_response = Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body(Body::from("Error processing backend response"))
+                    .unwrap();
+                
+                error_response
             }
         };
         
-        // Record total latency
-        context.latency.total = Instant::now().duration_since(start_time);
+        // Record total request latency
+        context.latency.total = start_time.elapsed().as_millis() as u64;
+        context.latency.gateway_processing = context.latency.total - context.latency.backend_total;
         
-        // Log the request summary
-        self.log_request_summary(&context, &modified_req, &final_response);
+        // Log request summary
+        self.log_request_summary(&context, &modified_req, &processed_resp);
         
-        Ok(final_response)
+        // Run logging phase plugins
+        if let Err(e) = self.plugin_manager.run_log_plugins(&modified_req, &processed_resp, &context).await {
+            error!("Error in logging plugins: {}", e);
+        }
+        
+        // Return the processed response
+        Ok(processed_resp)
     }
     
     /// Resolves a backend hostname to an IP address using the DNS cache
@@ -309,7 +381,7 @@ impl ProxyHandler {
             resp.status().as_u16(),
             context.proxy.backend_protocol,
             context.proxy.backend_port,
-            context.latency.backend_ttfb.as_millis(),
+            context.latency.backend_ttfb,
         );
     }
     
