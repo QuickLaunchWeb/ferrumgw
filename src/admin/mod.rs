@@ -158,8 +158,7 @@ impl AdminServer {
             let state_clone = Arc::clone(&state);
             
             // Configure HTTP server
-            let http = Http::new()
-                .with_executor(tokio::runtime::Handle::current());
+            let http = Http::new();
             
             // Spawn a task to serve the connection
             tokio::spawn(async move {
@@ -230,8 +229,7 @@ impl AdminServer {
             };
             
             // Configure HTTP server
-            let http = Http::new()
-                .with_executor(tokio::runtime::Handle::current());
+            let http = Http::new();
             
             // Spawn a task to serve the connection
             tokio::spawn(async move {

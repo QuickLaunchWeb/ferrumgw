@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use anyhow::{Result, Context};
 use async_trait::async_trait;
 use hyper::{Body, Request, Response};

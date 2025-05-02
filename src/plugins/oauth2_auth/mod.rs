@@ -6,8 +6,9 @@ use serde::{Serialize, Deserialize};
 use tracing::{debug, warn, info};
 use jsonwebtoken::{decode, DecodingKey, Validation, Algorithm};
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use crate::plugins::Plugin;
 use crate::proxy::handler::{RequestContext, Consumer};
@@ -192,7 +193,7 @@ impl OAuth2AuthPlugin {
     async fn validate_token(&self, token: &str) -> Result<Option<HashMap<String, serde_json::Value>>> {
         // Check token cache first if enabled
         if self.config.use_cache {
-            let token_cache = self.token_cache.read().unwrap();
+            let token_cache = self.token_cache.read().await;
             if let Some(cache_entry) = token_cache.get(token) {
                 let now = SystemTime::now();
                 if now < cache_entry.expires_at {
@@ -227,7 +228,7 @@ impl OAuth2AuthPlugin {
                 };
                 
                 // Store in cache
-                let mut token_cache = self.token_cache.write().unwrap();
+                let mut token_cache = self.token_cache.write().await;
                 token_cache.insert(token.to_string(), TokenCacheEntry {
                     claims: claims.clone(),
                     expires_at,
@@ -235,7 +236,7 @@ impl OAuth2AuthPlugin {
                 
                 // Cleanup expired entries occasionally
                 if token_cache.len() > 100 && rand::random::<f32>() < 0.1 {
-                    self.cleanup_token_cache();
+                    self.cleanup_token_cache().await;
                 }
             }
         }
@@ -244,9 +245,9 @@ impl OAuth2AuthPlugin {
     }
     
     /// Clean up expired entries in the token cache
-    fn cleanup_token_cache(&self) {
+    async fn cleanup_token_cache(&self) {
         let now = SystemTime::now();
-        let mut token_cache = self.token_cache.write().unwrap();
+        let mut token_cache = self.token_cache.write().await;
         token_cache.retain(|_, entry| entry.expires_at > now);
         debug!("Cleaned up token cache, {} entries remaining", token_cache.len());
     }
@@ -369,7 +370,7 @@ impl OAuth2AuthPlugin {
         // Try to find the key in the cache first
         let decoding_key = {
             let should_fetch_jwks = {
-                let jwks_cache = self.jwks_cache.read().unwrap();
+                let jwks_cache = self.jwks_cache.read().await;
                 if let Some(cache) = jwks_cache.get(jwks_uri) {
                     // Check if cache is still valid (not older than 24 hours)
                     let cache_age = SystemTime::now()
@@ -409,7 +410,7 @@ impl OAuth2AuthPlugin {
                 // Find the key we need
                 if let Some(jwks_key) = keys.get(&kid) {
                     // Store the fetched JWKS in cache
-                    let mut jwks_cache = self.jwks_cache.write().unwrap();
+                    let mut jwks_cache = self.jwks_cache.write().await;
                     jwks_cache.insert(jwks_uri.to_string(), JwksCache {
                         keys,
                         fetched_at: SystemTime::now(),
@@ -422,7 +423,7 @@ impl OAuth2AuthPlugin {
                 }
             } else {
                 // Key found in cache but we need to extract it again due to borrowing rules
-                let jwks_cache = self.jwks_cache.read().unwrap();
+                let jwks_cache = self.jwks_cache.read().await;
                 let cache = jwks_cache.get(jwks_uri).unwrap();
                 let jwks_key = cache.keys.get(&kid).unwrap();
                 jwks_key.decoding_key.clone()

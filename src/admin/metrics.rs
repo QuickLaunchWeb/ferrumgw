@@ -56,21 +56,16 @@ pub async fn get_metrics(state: Arc<AdminApiState>) -> Result<Response<Body>> {
     let metrics = Metrics {
         mode: state.operation_mode.clone(),
         config_last_updated_at: config.last_updated_at,
-        config_source_status: match state.metrics_collector.get_config_source_status() {
-            "online" => ConfigSourceStatus::Online,
-            "connecting" => ConfigSourceStatus::Connecting,
-            "degraded" => ConfigSourceStatus::Degraded,
-            "error" => ConfigSourceStatus::Error,
-            _ => ConfigSourceStatus::Unknown,
-        },
+        // Remove metrics_collector for now
+        config_source_status: ConfigSourceStatus::Unknown,
         proxy_count: config.proxies.len(),
         consumer_count: config.consumers.len(),
-        rps_current: state.metrics_collector.get_requests_per_second(),
-        status_codes_last_second: state.metrics_collector.get_status_code_counts().await,
+        rps_current: 0.0,
+        status_codes_last_second: std::collections::HashMap::new(),
     };
     
     // Serialize to JSON
-    let json = serde_json::to_string(&metrics)?;
+    let json = serde_json::to_string(&metrics).unwrap_or("{}".to_string());
     
     // Return the response
     Ok(Response::builder()

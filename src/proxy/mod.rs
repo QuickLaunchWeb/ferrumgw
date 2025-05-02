@@ -219,7 +219,6 @@ impl ProxyServer {
             
             // Configure HTTP server with appropriate limits
             let http = Http::new()
-                .with_executor(tokio::runtime::Handle::current())
                 .max_buf_size(max_header_size)
                 .http1_only(false)
                 .http2_only(false)
@@ -308,7 +307,6 @@ impl ProxyServer {
             
             // Configure HTTP server with appropriate limits
             let http = Http::new()
-                .with_executor(tokio::runtime::Handle::current())
                 .max_buf_size(max_header_size)
                 .http1_only(false)
                 .http2_only(false)
