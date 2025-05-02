@@ -12,7 +12,8 @@ use super::proto::{
     Consumer as ProtoConsumer, 
     PluginConfig as ProtoPluginConfig,
     Protocol as ProtoProtocol, 
-    AuthMode as ProtoAuthMode
+    AuthMode as ProtoAuthMode,
+    ConfigSnapshot as ProtoConfigSnapshot,
 };
 
 /// Conversion from protobuf Proxy to domain Proxy
@@ -249,26 +250,25 @@ impl From<&PluginConfig> for ProtoPluginConfig {
 }
 
 /// Conversion from Configuration to ConfigSnapshot
-impl From<&Configuration> for ConfigSnapshot {
+impl From<&Configuration> for super::proto::ConfigSnapshot {
     fn from(config: &Configuration) -> Self {
-        let proxies = config.proxies.iter()
-            .map(ProtoProxy::from)
-            .collect();
-        
-        let consumers = config.consumers.iter()
-            .map(ProtoConsumer::from)
-            .collect();
-        
-        let plugin_configs = config.plugin_configs.iter()
-            .map(ProtoPluginConfig::from)
-            .collect();
-        
-        ConfigSnapshot {
-            proxies,
-            consumers,
-            plugin_configs,
-            version: 0, // Will be set by the caller
-            created_at: config.last_updated_at.to_rfc3339(),
+        Self {
+            proxies: config
+                .proxies
+                .iter()
+                .map(super::proto::Proxy::from)
+                .collect(),
+            consumers: config
+                .consumers
+                .iter()
+                .map(super::proto::Consumer::from)
+                .collect(),
+            plugin_configs: config
+                .plugin_configs
+                .iter()
+                .map(super::proto::PluginConfig::from)
+                .collect(),
+            version: config.last_updated_at.to_rfc3339(), // Use last_updated_at as version string
         }
     }
 }

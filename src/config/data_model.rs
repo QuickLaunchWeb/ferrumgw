@@ -118,6 +118,17 @@ pub struct Configuration {
     pub last_updated_at: DateTime<Utc>,
 }
 
+impl Default for Configuration {
+    fn default() -> Self {
+        Self {
+            proxies: Vec::new(),
+            consumers: Vec::new(),
+            plugin_configs: Vec::new(),
+            last_updated_at: Utc::now(), // Initialize with current time
+        }
+    }
+}
+
 /// Represents incremental changes to the configuration since a specific timestamp
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigurationDelta {

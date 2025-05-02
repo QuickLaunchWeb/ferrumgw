@@ -9,9 +9,9 @@ use crate::modes::OperationMode;
 use crate::proxy::update_manager::RouterUpdate;
 
 /// Handler for GET /proxies endpoint - lists all proxies
-pub async fn list_proxies(req: Request<Body>, state: Arc<AdminApiState>) -> Result<Response<Body>> {
+pub async fn list_proxies(state: Arc<AdminApiState>) -> Result<Response<Body>> {
     // Extract pagination parameters
-    let pagination = PaginationQuery::from_request(&req);
+    let pagination = PaginationQuery::from_request(&Request::new(Body::empty()));
     
     // Get the current configuration
     let config = state.shared_config.read().await;
@@ -74,42 +74,35 @@ pub async fn create_proxy(req: Request<Body>, state: Arc<AdminApiState>) -> Resu
     proxy.updated_at = now;
     
     // Create the proxy in the database
-    if let Some(db) = &state.db_client {
-        match db.create_proxy(&proxy).await {
-            Ok(created_proxy) => {
-                // Serialize the created proxy to JSON
-                let json = serde_json::to_string(&created_proxy)?;
-                
-                // Return the response
-                Ok(Response::builder()
-                    .status(StatusCode::CREATED)
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(json))
-                    .unwrap())
-            },
-            Err(e) => {
-                error!("Failed to create proxy in database: {}", e);
-                
-                Ok(Response::builder()
-                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(format!(r#"{{"error":"Failed to create proxy: {}"}}"#, e)))
-                    .unwrap())
+    match state.db_client.create_proxy(&proxy).await {
+        Ok(created_proxy) => {
+            // Serialize the created proxy to JSON
+            let json = serde_json::to_string(&created_proxy)?;
+            
+            // Return the response
+            let response = Response::builder()
+                .status(StatusCode::CREATED)
+                .header("Content-Type", "application/json")
+                .body(Body::from(json))
+                .unwrap();
+            
+            // Notify the update manager about the configuration change
+            if let Some(update_tx) = &state.update_tx {
+                if let Err(e) = update_tx.send(RouterUpdate::ConfigChanged) {
+                    debug!("Failed to notify router update: {}", e);
+                }
             }
-        }
-    } else {
-        // No database client available
-        Ok(Response::builder()
-            .status(StatusCode::SERVICE_UNAVAILABLE)
-            .header("Content-Type", "application/json")
-            .body(Body::from(r#"{"error":"Database is unavailable"}"#))
-            .unwrap())
-    }
-    
-    // Notify the update manager about the configuration change
-    if let Some(update_tx) = &state.update_tx {
-        if let Err(e) = update_tx.send(RouterUpdate::ConfigChanged) {
-            debug!("Failed to notify router update: {}", e);
+            
+            Ok(response)
+        },
+        Err(e) => {
+            error!("Failed to create proxy in database: {}", e);
+            
+            Ok(Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .header("Content-Type", "application/json")
+                .body(Body::from(format!(r#"{{"error":"Failed to create proxy: {}"}}"#, e)))
+                .unwrap())
         }
     }
 }
@@ -122,13 +115,13 @@ pub async fn get_proxy(proxy_id: &str, state: Arc<AdminApiState>) -> Result<Resp
     // First check in-memory configuration
     let proxy = config.proxies.iter().find(|p| p.id == proxy_id).cloned();
     
-    // If not found in memory and database is available, check the database
-    let proxy = if proxy.is_none() && state.db_client.is_some() {
-        let db = state.db_client.as_ref().unwrap();
-        match db.get_proxy_by_id(proxy_id).await {
+    // If not found in memory, try to fetch it from the database
+    let proxy = if proxy.is_none() {
+        debug!("Proxy not found in memory, fetching from database: {}", proxy_id);
+        match state.db_client.get_proxy_by_id(proxy_id).await {
             Ok(db_proxy) => Some(db_proxy),
             Err(e) => {
-                debug!("Error retrieving proxy from database: {}", e);
+                error!("Failed to fetch proxy {} from database: {}", proxy_id, e);
                 None
             }
         }
@@ -215,42 +208,35 @@ pub async fn update_proxy(proxy_id: &str, req: Request<Body>, state: Arc<AdminAp
     updated_proxy.updated_at = chrono::Utc::now();
     
     // Update the proxy in the database
-    if let Some(db) = &state.db_client {
-        match db.update_proxy(&updated_proxy).await {
-            Ok(_) => {
-                // Serialize the updated proxy to JSON
-                let json = serde_json::to_string(&updated_proxy)?;
-                
-                // Return the response
-                Ok(Response::builder()
-                    .status(StatusCode::OK)
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(json))
-                    .unwrap())
-            },
-            Err(e) => {
-                error!("Failed to update proxy in database: {}", e);
-                
-                Ok(Response::builder()
-                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(format!(r#"{{"error":"Failed to update proxy: {}"}}"#, e)))
-                    .unwrap())
+    match state.db_client.update_proxy(&updated_proxy).await {
+        Ok(_) => {
+            // Serialize the updated proxy to JSON
+            let json = serde_json::to_string(&updated_proxy)?;
+            
+            // Return the response
+            let response = Response::builder()
+                .status(StatusCode::OK)
+                .header("Content-Type", "application/json")
+                .body(Body::from(json))
+                .unwrap();
+            
+            // Notify the update manager about the configuration change
+            if let Some(update_tx) = &state.update_tx {
+                if let Err(e) = update_tx.send(RouterUpdate::ConfigChanged) {
+                    debug!("Failed to notify router update: {}", e);
+                }
             }
-        }
-    } else {
-        // No database client available
-        Ok(Response::builder()
-            .status(StatusCode::SERVICE_UNAVAILABLE)
-            .header("Content-Type", "application/json")
-            .body(Body::from(r#"{"error":"Database is unavailable"}"#))
-            .unwrap())
-    }
-    
-    // Notify the update manager about the configuration change
-    if let Some(update_tx) = &state.update_tx {
-        if let Err(e) = update_tx.send(RouterUpdate::ConfigChanged) {
-            debug!("Failed to notify router update: {}", e);
+            
+            Ok(response)
+        },
+        Err(e) => {
+            error!("Failed to update proxy in database: {}", e);
+            
+            Ok(Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .header("Content-Type", "application/json")
+                .body(Body::from(format!(r#"{{"error":"Failed to update proxy: {}"}}"#, e)))
+                .unwrap())
         }
     }
 }
@@ -280,38 +266,31 @@ pub async fn delete_proxy(proxy_id: &str, state: Arc<AdminApiState>) -> Result<R
     }
     
     // Delete the proxy from the database
-    if let Some(db) = &state.db_client {
-        match db.delete_proxy(proxy_id).await {
-            Ok(_) => {
-                // Return the response
-                Ok(Response::builder()
-                    .status(StatusCode::NO_CONTENT)
-                    .body(Body::empty())
-                    .unwrap())
-            },
-            Err(e) => {
-                error!("Failed to delete proxy from database: {}", e);
-                
-                Ok(Response::builder()
-                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(format!(r#"{{"error":"Failed to delete proxy: {}"}}"#, e)))
-                    .unwrap())
+    match state.db_client.delete_proxy(proxy_id).await {
+        Ok(_) => {
+            // Return the response
+            let response = Response::builder()
+                .status(StatusCode::NO_CONTENT)
+                .body(Body::empty())
+                .unwrap();
+            
+            // Notify the update manager about the configuration change
+            if let Some(update_tx) = &state.update_tx {
+                if let Err(e) = update_tx.send(RouterUpdate::ConfigChanged) {
+                    debug!("Failed to notify router update: {}", e);
+                }
             }
-        }
-    } else {
-        // No database client available
-        Ok(Response::builder()
-            .status(StatusCode::SERVICE_UNAVAILABLE)
-            .header("Content-Type", "application/json")
-            .body(Body::from(r#"{"error":"Database is unavailable"}"#))
-            .unwrap())
-    }
-    
-    // Notify the update manager about the configuration change
-    if let Some(update_tx) = &state.update_tx {
-        if let Err(e) = update_tx.send(RouterUpdate::ConfigChanged) {
-            debug!("Failed to notify router update: {}", e);
+            
+            Ok(response)
+        },
+        Err(e) => {
+            error!("Failed to delete proxy from database: {}", e);
+            
+            Ok(Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .header("Content-Type", "application/json")
+                .body(Body::from(format!(r#"{{"error":"Failed to delete proxy: {}"}}"#, e)))
+                .unwrap())
         }
     }
 }

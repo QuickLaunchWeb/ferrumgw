@@ -278,7 +278,7 @@ async fn handle_request(
     match authenticate_request(&req, &state.jwt_secret) {
         Ok(claims) => {
             // Request is authenticated, route it to the appropriate handler
-            match route_request(req, state, claims).await {
+            match route_request(req, state.clone(), claims).await {
                 Ok(response) => Ok(response),
                 Err(e) => {
                     error!("Error handling admin request: {}", e);
@@ -341,28 +341,28 @@ async fn route_request(
     // Route based on path and method
     match (method, path) {
         (&Method::GET, "/proxies") => {
-            routes::proxies::list_proxies(req, state).await
+            routes::proxies::list_proxies(state.clone()).await
         },
         (&Method::POST, "/proxies") => {
-            routes::proxies::create_proxy(req, state).await
+            routes::proxies::create_proxy(req, state.clone()).await
         },
         (&Method::GET, path) if path.starts_with("/proxies/") => {
             let proxy_id = &path[9..]; // Skip "/proxies/"
-            routes::proxies::get_proxy(proxy_id, state).await
+            routes::proxies::get_proxy(proxy_id, state.clone()).await
         },
         (&Method::PUT, path) if path.starts_with("/proxies/") => {
             let proxy_id = &path[9..]; // Skip "/proxies/"
-            routes::proxies::update_proxy(proxy_id, req, state).await
+            routes::proxies::update_proxy(proxy_id, req, state.clone()).await
         },
         (&Method::DELETE, path) if path.starts_with("/proxies/") => {
             let proxy_id = &path[9..]; // Skip "/proxies/"
-            routes::proxies::delete_proxy(proxy_id, state).await
+            routes::proxies::delete_proxy(proxy_id, state.clone()).await
         },
         (&Method::GET, "/consumers") => {
-            routes::consumers::list_consumers(req, state).await
+            routes::consumers::list_consumers(state.clone()).await
         },
         (&Method::POST, "/consumers") => {
-            routes::consumers::create_consumer(req, state).await
+            routes::consumers::create_consumer(req, state.clone()).await
         },
         (&Method::GET, path) if path.starts_with("/consumers/") => {
             if path.contains("/credentials/") {
@@ -371,14 +371,14 @@ async fn route_request(
                 if parts.len() == 4 {
                     let consumer_id = parts[2];
                     let credential_type = parts[3];
-                    routes::consumers::get_consumer_credentials(consumer_id, credential_type, state).await
+                    routes::consumers::get_consumer_credentials(consumer_id, credential_type, state.clone()).await
                 } else {
                     Err(anyhow::anyhow!("Invalid path format"))
                 }
             } else {
                 // Handle consumer endpoint
                 let consumer_id = &path[11..]; // Skip "/consumers/"
-                routes::consumers::get_consumer(consumer_id, state).await
+                routes::consumers::get_consumer(consumer_id, state.clone()).await
             }
         },
         (&Method::PUT, path) if path.starts_with("/consumers/") => {
@@ -388,14 +388,14 @@ async fn route_request(
                 if parts.len() == 4 {
                     let consumer_id = parts[2];
                     let credential_type = parts[3];
-                    routes::consumers::update_consumer_credentials(consumer_id, credential_type, req, state).await
+                    routes::consumers::update_consumer_credentials(consumer_id, credential_type, req, state.clone()).await
                 } else {
                     Err(anyhow::anyhow!("Invalid path format"))
                 }
             } else {
                 // Handle consumer endpoint
                 let consumer_id = &path[11..]; // Skip "/consumers/"
-                routes::consumers::update_consumer(consumer_id, req, state).await
+                routes::consumers::update_consumer(consumer_id, req, state.clone()).await
             }
         },
         (&Method::DELETE, path) if path.starts_with("/consumers/") => {
@@ -405,39 +405,39 @@ async fn route_request(
                 if parts.len() == 4 {
                     let consumer_id = parts[2];
                     let credential_type = parts[3];
-                    routes::consumers::delete_consumer_credentials(consumer_id, credential_type, state).await
+                    routes::consumers::delete_consumer_credentials(consumer_id, credential_type, state.clone()).await
                 } else {
                     Err(anyhow::anyhow!("Invalid path format"))
                 }
             } else {
                 // Handle consumer endpoint
                 let consumer_id = &path[11..]; // Skip "/consumers/"
-                routes::consumers::delete_consumer(consumer_id, state).await
+                routes::consumers::delete_consumer(consumer_id, state.clone()).await
             }
         },
-        (&Method::GET, "/plugins") => {
-            routes::plugins::list_plugin_types(req, state).await
+        (&Method::GET, "/plugins") => { // Endpoint to list available plugin *types*
+            routes::plugins::list_plugin_types(state.clone()).await
         },
-        (&Method::GET, "/plugins/config") => {
-            routes::plugins::list_plugin_configs(req, state).await
+        (&Method::GET, "/plugins/config") => { // Endpoint to list created plugin *configurations*
+            routes::plugins::list_plugin_configs(state.clone()).await
         },
         (&Method::POST, "/plugins/config") => {
-            routes::plugins::create_plugin_config(req, state).await
+            routes::plugins::create_plugin_config(req, state.clone()).await
         },
         (&Method::GET, path) if path.starts_with("/plugins/config/") => {
             let config_id = &path[15..]; // Skip "/plugins/config/"
-            routes::plugins::get_plugin_config(config_id, state).await
+            routes::plugins::get_plugin_config(config_id, state.clone()).await
         },
         (&Method::PUT, path) if path.starts_with("/plugins/config/") => {
             let config_id = &path[15..]; // Skip "/plugins/config/"
-            routes::plugins::update_plugin_config(config_id, req, state).await
+            routes::plugins::update_plugin_config(config_id, req, state.clone()).await
         },
         (&Method::DELETE, path) if path.starts_with("/plugins/config/") => {
             let config_id = &path[15..]; // Skip "/plugins/config/"
-            routes::plugins::delete_plugin_config(config_id, state).await
+            routes::plugins::delete_plugin_config(config_id, state.clone()).await
         },
         (&Method::GET, "/admin/metrics") => {
-            metrics::get_metrics(state).await
+            metrics::get_metrics(state.clone()).await
         },
         _ => {
             // Route not found

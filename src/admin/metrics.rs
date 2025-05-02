@@ -54,7 +54,7 @@ pub async fn get_metrics(state: Arc<AdminApiState>) -> Result<Response<Body>> {
     
     // Create the metrics object
     let metrics = Metrics {
-        mode: state.operation_mode.clone(),
+        mode: state.operation_mode.to_string(),
         config_last_updated_at: config.last_updated_at,
         // Remove metrics_collector for now
         config_source_status: ConfigSourceStatus::Unknown,

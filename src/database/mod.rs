@@ -168,7 +168,7 @@ impl DatabaseClient {
     // Here we would implement specific CRUD methods for each entity type
     // These would be used by the Admin API to manage the configuration
     
-    pub async fn create_proxy(&self, proxy: Proxy) -> Result<Proxy> {
+    pub async fn create_proxy(&self, proxy: &Proxy) -> Result<Proxy> {
         // Implementation for creating a proxy in the database
         // Each database adapter will check for listen_path uniqueness
         
@@ -251,6 +251,209 @@ impl DatabaseClient {
         }
     }
     
-    // Similar methods would be implemented for other CRUD operations
-    // and other entity types (Consumer, PluginConfig)
+    // Create a new plugin config in the database
+    // Returns the ID of the newly created plugin config
+    pub async fn create_plugin_config(&self, plugin_config: &PluginConfig) -> Result<String> {
+        info!("Creating plugin config in database: {}", plugin_config.id);
+        match self.db_type {
+            DatabaseType::Postgres => {
+                if let DbPool::Postgres(ref pool) = *self.pool {
+                    postgres::create_plugin_config(pool, plugin_config).await
+                } else { unreachable!("Pool type mismatch") }
+            },
+            DatabaseType::MySQL => {
+                 if let DbPool::MySQL(ref pool) = *self.pool {
+                     mysql::create_plugin_config(pool, plugin_config).await
+                 } else { unreachable!("Pool type mismatch") }
+            },
+            DatabaseType::SQLite => {
+                 if let DbPool::SQLite(ref pool) = *self.pool {
+                     sqlite::create_plugin_config(pool, plugin_config).await
+                 } else { unreachable!("Pool type mismatch") }
+            },
+        }
+    }
+    
+    // Update an existing plugin config in the database
+    pub async fn update_plugin_config(&self, plugin_config: &PluginConfig) -> Result<()> {
+        info!("Updating plugin config in database: {}", plugin_config.id);
+         match self.db_type {
+            DatabaseType::Postgres => {
+                if let DbPool::Postgres(ref pool) = *self.pool {
+                    postgres::update_plugin_config(pool, plugin_config).await
+                } else { unreachable!("Pool type mismatch") }
+            },
+            DatabaseType::MySQL => {
+                 if let DbPool::MySQL(ref pool) = *self.pool {
+                     mysql::update_plugin_config(pool, plugin_config).await
+                 } else { unreachable!("Pool type mismatch") }
+            },
+            DatabaseType::SQLite => {
+                 if let DbPool::SQLite(ref pool) = *self.pool {
+                     sqlite::update_plugin_config(pool, plugin_config).await
+                 } else { unreachable!("Pool type mismatch") }
+            },
+        }
+    }
+    
+    // Delete a plugin config from the database
+    pub async fn delete_plugin_config(&self, config_id: &str) -> Result<()> {
+        info!("Deleting plugin config from database: {}", config_id);
+         match self.db_type {
+            DatabaseType::Postgres => {
+                if let DbPool::Postgres(ref pool) = *self.pool {
+                    postgres::delete_plugin_config(pool, config_id).await
+                } else { unreachable!("Pool type mismatch") }
+            },
+            DatabaseType::MySQL => {
+                 if let DbPool::MySQL(ref pool) = *self.pool {
+                     mysql::delete_plugin_config(pool, config_id).await
+                 } else { unreachable!("Pool type mismatch") }
+            },
+            DatabaseType::SQLite => {
+                 if let DbPool::SQLite(ref pool) = *self.pool {
+                     sqlite::delete_plugin_config(pool, config_id).await
+                 } else { unreachable!("Pool type mismatch") }
+            },
+        }
+    }
+     
+     // Create a new consumer in the database
+    // Returns the ID of the newly created consumer
+    pub async fn create_consumer(&self, consumer: &Consumer) -> Result<String> {
+        info!("Creating consumer in database: {}", consumer.id);
+        match self.db_type {
+            DatabaseType::Postgres => {
+                if let DbPool::Postgres(ref pool) = *self.pool {
+                    postgres::create_consumer(pool, consumer).await
+                } else { unreachable!("Pool type mismatch") }
+            },
+            DatabaseType::MySQL => {
+                 if let DbPool::MySQL(ref pool) = *self.pool {
+                     mysql::create_consumer(pool, consumer).await
+                 } else { unreachable!("Pool type mismatch") }
+            },
+            DatabaseType::SQLite => {
+                 if let DbPool::SQLite(ref pool) = *self.pool {
+                     sqlite::create_consumer(pool, consumer).await
+                 } else { unreachable!("Pool type mismatch") }
+            },
+        }
+    }
+    
+    // Update an existing consumer in the database
+    pub async fn update_consumer(&self, consumer: &Consumer) -> Result<()> {
+        info!("Updating consumer in database: {}", consumer.id);
+         match self.db_type {
+            DatabaseType::Postgres => {
+                if let DbPool::Postgres(ref pool) = *self.pool {
+                    postgres::update_consumer(pool, consumer).await
+                } else { unreachable!("Pool type mismatch") }
+            },
+            DatabaseType::MySQL => {
+                 if let DbPool::MySQL(ref pool) = *self.pool {
+                     mysql::update_consumer(pool, consumer).await
+                 } else { unreachable!("Pool type mismatch") }
+            },
+            DatabaseType::SQLite => {
+                 if let DbPool::SQLite(ref pool) = *self.pool {
+                     sqlite::update_consumer(pool, consumer).await
+                 } else { unreachable!("Pool type mismatch") }
+            },
+        }
+    }
+    
+    // Get a consumer by its ID from the database
+    pub async fn get_consumer_by_id(&self, consumer_id: &str) -> Result<Consumer> {
+        info!("Getting consumer from database: {}", consumer_id);
+        match self.db_type {
+            DatabaseType::Postgres => {
+                if let DbPool::Postgres(ref pool) = *self.pool {
+                    postgres::get_consumer_by_id(pool, consumer_id).await
+                } else {
+                    unreachable!("Pool type mismatch with database type")
+                }
+            },
+            DatabaseType::MySQL => {
+                if let DbPool::MySQL(ref pool) = *self.pool {
+                    mysql::get_consumer_by_id(pool, consumer_id).await
+                } else {
+                    unreachable!("Pool type mismatch with database type")
+                }
+            },
+            DatabaseType::SQLite => {
+                if let DbPool::SQLite(ref pool) = *self.pool {
+                    sqlite::get_consumer_by_id(pool, consumer_id).await
+                } else {
+                    unreachable!("Pool type mismatch with database type")
+                }
+            },
+        }
+    }
+     
+     // Get a proxy by its ID from the database
+    pub async fn get_proxy_by_id(&self, proxy_id: &str) -> Result<Proxy> {
+        info!("Getting proxy from database: {}", proxy_id);
+        match self.db_type {
+            DatabaseType::Postgres => {
+                if let DbPool::Postgres(ref pool) = *self.pool {
+                    postgres::get_proxy_by_id(pool, proxy_id).await
+                } else { unreachable!("Pool type mismatch") }
+            },
+            DatabaseType::MySQL => {
+                 if let DbPool::MySQL(ref pool) = *self.pool {
+                     mysql::get_proxy_by_id(pool, proxy_id).await
+                 } else { unreachable!("Pool type mismatch") }
+            },
+            DatabaseType::SQLite => {
+                 if let DbPool::SQLite(ref pool) = *self.pool {
+                     sqlite::get_proxy_by_id(pool, proxy_id).await
+                 } else { unreachable!("Pool type mismatch") }
+            },
+        }
+    }
+
+    // Update an existing proxy in the database
+    pub async fn update_proxy(&self, proxy: &Proxy) -> Result<()> {
+        info!("Updating proxy in database: {}", proxy.id);
+         match self.db_type {
+            DatabaseType::Postgres => {
+                if let DbPool::Postgres(ref pool) = *self.pool {
+                    postgres::update_proxy(pool, proxy).await
+                } else { unreachable!("Pool type mismatch") }
+            },
+            DatabaseType::MySQL => {
+                 if let DbPool::MySQL(ref pool) = *self.pool {
+                     mysql::update_proxy(pool, proxy).await
+                 } else { unreachable!("Pool type mismatch") }
+            },
+            DatabaseType::SQLite => {
+                 if let DbPool::SQLite(ref pool) = *self.pool {
+                     sqlite::update_proxy(pool, proxy).await
+                 } else { unreachable!("Pool type mismatch") }
+            },
+        }
+    }
+
+    // Delete a proxy by its ID from the database
+    pub async fn delete_proxy(&self, proxy_id: &str) -> Result<()> {
+        info!("Deleting proxy from database: {}", proxy_id);
+         match self.db_type {
+            DatabaseType::Postgres => {
+                if let DbPool::Postgres(ref pool) = *self.pool {
+                    postgres::delete_proxy(pool, proxy_id).await
+                } else { unreachable!("Pool type mismatch") }
+            },
+            DatabaseType::MySQL => {
+                 if let DbPool::MySQL(ref pool) = *self.pool {
+                     mysql::delete_proxy(pool, proxy_id).await
+                 } else { unreachable!("Pool type mismatch") }
+            },
+            DatabaseType::SQLite => {
+                 if let DbPool::SQLite(ref pool) = *self.pool {
+                     sqlite::delete_proxy(pool, proxy_id).await
+                 } else { unreachable!("Pool type mismatch") }
+            },
+        }
+    }
 }

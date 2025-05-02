@@ -3,7 +3,6 @@ pub mod proto;
 pub mod conversions;
 
 use proto::*;
-use conversions::ConfigSnapshot;
 use tokio::sync::{mpsc, RwLock};
 use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
 use tonic::{Request, Response, Status};
@@ -88,8 +87,8 @@ impl ConfigServiceImpl {
     pub async fn push_full_config(&self) -> Result<()> {
         let config = self.config_store.read().await;
         
-        // Create a snapshot of the current configuration
-        let mut snapshot = proto::ConfigSnapshot::from(&*config as &Configuration);
+        // Convert internal config to proto representation
+        let mut snapshot = proto::ConfigSnapshot::from(&*config);
         
         // Set the new version
         let version = self.next_version();
@@ -132,7 +131,7 @@ impl ConfigService for ConfigServiceImpl {
         
         // If client has older or no config, send full snapshot
         if req.current_version < current_version {
-            let mut snapshot = proto::ConfigSnapshot::from(&*config as &Configuration);
+            let mut snapshot = proto::ConfigSnapshot::from(&*config);
             snapshot.version = current_version;
             
             let update = ConfigUpdate {
@@ -163,8 +162,10 @@ impl ConfigService for ConfigServiceImpl {
         let config = self.config_store.read().await;
         
         // Create a snapshot
-        let mut snapshot = proto::ConfigSnapshot::from(&*config as &Configuration);
-        snapshot.version = self.get_current_version();
+        let mut snapshot = proto::ConfigSnapshot::from(&*config);
+        snapshot.version = self.get_current_version(); // Use current version for snapshot
+        
+        let client_node_id = req.node_id;
         
         Ok(Response::new(snapshot))
     }
@@ -176,7 +177,7 @@ impl ConfigService for ConfigServiceImpl {
         let report = request.into_inner();
         let node_id = report.node_id;
         
-        debug!("Received health report from node {}: status={}", node_id, report.status);
+        info!("Received health report from node {}: status={}, metrics={:?}", report.node_id, report.status, report.metrics);
         
         // Store health report or process metrics if needed
         
@@ -278,14 +279,12 @@ impl DataPlaneClient {
     
     // Convert a ConfigSnapshot to our domain Configuration
     pub async fn snapshot_to_configuration(snapshot: ConfigSnapshot) -> Result<Configuration> {
-        let mut proxies = Vec::new();
-        let mut consumers = Vec::new();
-        let mut plugin_configs = Vec::new();
-        
+        let mut config = Configuration::default();
+    
         // Convert consumers first since proxies and plugin configs might reference them
         for proto_consumer in snapshot.consumers {
             match Consumer::try_from(&proto_consumer) {
-                Ok(consumer) => consumers.push(consumer),
+                Ok(consumer) => config.consumers.push(consumer),
                 Err(e) => warn!("Failed to convert consumer: {}", e),
             }
         }
@@ -293,7 +292,7 @@ impl DataPlaneClient {
         // Convert plugin configs next
         for proto_plugin_config in snapshot.plugin_configs {
             match PluginConfig::try_from(&proto_plugin_config) {
-                Ok(plugin_config) => plugin_configs.push(plugin_config),
+                Ok(plugin_config) => config.plugin_configs.push(plugin_config),
                 Err(e) => warn!("Failed to convert plugin config: {}", e),
             }
         }
@@ -304,7 +303,7 @@ impl DataPlaneClient {
                 Ok(mut proxy) => {
                     // Link plugins to proxy based on IDs
                     for plugin_id in &proto_proxy.plugin_config_ids {
-                        if let Some(plugin_config) = plugin_configs.iter().find(|pc| pc.id == *plugin_id) {
+                        if let Some(_plugin_config) = config.plugin_configs.iter().find(|pc| pc.id == *plugin_id) {
                             // Need to convert to PluginAssociation, not directly use PluginConfig
                             proxy.plugins.push(crate::config::data_model::PluginAssociation {
                                 plugin_config_id: plugin_id.clone(),
@@ -312,7 +311,7 @@ impl DataPlaneClient {
                             });
                         }
                     }
-                    proxies.push(proxy);
+                    config.proxies.push(proxy);
                 },
                 Err(e) => warn!("Failed to convert proxy: {}", e),
             }
@@ -323,11 +322,8 @@ impl DataPlaneClient {
             .map_err(|e| anyhow!("Invalid created_at timestamp: {}", e))?
             .with_timezone(&chrono::Utc);
         
-        Ok(Configuration {
-            proxies,
-            consumers,
-            plugin_configs,
-            last_updated_at,
-        })
+        config.last_updated_at = last_updated_at;
+        
+        Ok(config)
     }
 }
